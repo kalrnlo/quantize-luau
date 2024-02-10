@@ -1,7 +1,7 @@
 quantize-luau
 ========
 
-Luau module for color quantization, based on [quantize.js](https://github.com/olivierlesnicki/quantize) and [Leptonica](https://github.com/DanBloomberg/leptonica/blob/master/src/colorquant2.c).
+A fully typed Luau module for MMCQ color quantization. With added support for Color3s to be used instead of RGB arrays. Based on [quantize.js](https://github.com/olivierlesnicki/quantize) and [Leptonica](https://github.com/DanBloomberg/leptonica/blob/master/src/colorquant2.c).
 
 
 Quick Overview
@@ -33,7 +33,7 @@ ColorMap:Palette()
 
 ##### Reduced pixel
 
-The `:Map(Pixel)` method maps an individual pixel to the reduced color palette.
+The `:Map(Pixel)` method maps an individual pixel or Color3 to the reduced color palette.
 
 `````lua
 -- Returns the reduced pixel
