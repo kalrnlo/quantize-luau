@@ -649,4 +649,4 @@ local function Quantize(Pixels: {}, MaxColors: number)
 	return ColorMap
 end
 
-return Quantize :: ((Pixels: {Pixel} , MaxColors: number) -> ColorMap) & ((Color3s: {Color3}, MaxColors: number) -> ColorMap)
+return Quantize :: ((Pixels: {Pixel}, MaxColors: number) -> ColorMap) & ((Color3s: {Color3}, MaxColors: number) -> ColorMap)
