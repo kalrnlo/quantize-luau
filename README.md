@@ -19,7 +19,7 @@ local ColorMap = Quantize(ArrayOfPixels, MaxColors)
 `````
 
 * `Pixels` - An array of pixels (represented as {R,G,B arrays}) or Color3s to quantize
-* `MaxColors` - The maximum number of colours allowed in the reduced palette
+* `MaxColors` - The maximum number of colours allowed in the reduced palette, must be within 2 to 256
 
 ##### Reduced Palette
 
