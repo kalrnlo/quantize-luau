@@ -516,10 +516,20 @@ end
 
 -- inner function to do the iteration
 local function Iterate(Target: number, ColorMap: ColorMap, Histo: {number}, Comparator: Comparator)
-	local PixelCount = 1
+	local PixelCount = #ColorMap.VolumeBoxes
 	local Niters = 0
 
 	while Niters < MaxIterations do
+		-- Doing the checks at the top like this PR:
+		-- https://github.com/olivierlesnicki/quantize/pull/6
+		if PixelCount >= Target or Niters > MaxIterations then return end
+		--[[
+			if Niters > MaxIterations then
+				warn("[Quantize] infinite loop; perhaps too few pixels!")
+				return
+			end
+		--]]
+
 		SortColorMap(ColorMap, Comparator)
 		local VolumeBox = table.remove(ColorMap.VolumeBoxes) :: VolumeBox
 
@@ -547,14 +557,8 @@ local function Iterate(Target: number, ColorMap: ColorMap, Histo: {number}, Comp
 			table.insert(ColorMap.VolumeBoxes, VolumeBoxes[2])
 			PixelCount += 1
 		end
-		if PixelCount >= Target then return end
 
 		Niters += 1
-
-		if Niters > MaxIterations then
-			warn("[Quantize] infinite loop; perhaps too few pixels!")
-			return
-		end
 	end
 end
 
@@ -667,7 +671,7 @@ local function Quantize(Pixels: {}, MaxColors: number, Outdepth: number?)
 	ReverseTable(VolumeBoxes)
 
 	-- next set - generate the median cuts using the (npix * vol) sorting.
-	Iterate(MaxColors - #VolumeBoxes, ColorMap, Histo, OccupancySizeSort)
+	Iterate(MaxColors, ColorMap, Histo, OccupancySizeSort)
 
 	-- calculate the actual colors
 	-- deviation: reversing again
