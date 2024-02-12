@@ -76,26 +76,27 @@ local HistoSize = bit32.lshift(1, 3 * Sigbits)
 local RShift = 8 - Sigbits
 local VboxAvgMult = bit32.lshift(1, RShift)
 local Mask = bit32.rshift(0xff, RShift)
+local ConversionHex = 0xFFFFFFFF
 
 local function GetOrCreatePixel(PixelOrColor3: Pixel | Color3): Pixel
 	if typeof(PixelOrColor3) == "table" then
-        return PixelOrColor3
-    else
-        local Pixel = table.create(3)
+		return PixelOrColor3
+	else
+		local Pixel = table.create(3)
 		Pixel[1] = math.clamp(math.ceil(PixelOrColor3.R * 255), 0, 255)
 		Pixel[2] = math.clamp(math.ceil(PixelOrColor3.G * 255), 0, 255)
 		Pixel[3] = math.clamp(math.ceil(PixelOrColor3.B * 255), 0, 255)
-        return Pixel
+		return Pixel
 	end
 end
 
 local function CheckPixel(Pixel: Pixel)
-        if Pixel[1] > 255 or Pixel[1] < 0 then
-            error("[Quantize] Red value in Pixel is not in range 0..255")
+	if Pixel[1] > 255 or Pixel[1] < 0 then
+		error("[Quantize] Red value in Pixel is not in range 0..255")
         elseif Pixel[2] > 255 or Pixel[2] < 0 then
-            error("[Quantize] Green value in Pixel is not in range 0..255")
+		error("[Quantize] Green value in Pixel is not in range 0..255")
         elseif Pixel[3] > 255 or Pixel[3] < 0 then
-            error("[Quantize] Blue value in Pixel is not in range 0..255")
+		error("[Quantize] Blue value in Pixel is not in range 0..255")
         end
         return Pixel
 end
@@ -126,7 +127,7 @@ local function ReverseTable<T>(Tbl: {T})
 		Tbl[Index] = Tbl[SwapIndex]
 		Tbl[SwapIndex] = Original
 	end 
-    return Tbl
+	return Tbl
 end
 
 -- Modified from:
@@ -142,7 +143,7 @@ local function GetArraySum(Tbl: {number})
 end
 
 local function To32Bit(N: number)
-	return bit32.band(N, 0xFFFFFFFF)
+	return bit32.band(N, ConversionHex)
 end
 
 --[[
@@ -580,7 +581,7 @@ local function Quantize(Pixels: {}, MaxColors: number, Outdepth: number?)
 	-- array clone detection, as a clone wont be equal to the original
 	if Pixels ~= NewPixels then
 		for Index, Value in NewPixels do
- 			local NewPixel = GetOrCreatePixel(Value)
+			local NewPixel = GetOrCreatePixel(Value)
 			
 			if NewPixel[1] > 255 or NewPixel[1] < 0 then
 				error(string.format(InvalidPixelAtIndexFormat, "Red", Index), 2)
@@ -610,46 +611,50 @@ local function Quantize(Pixels: {}, MaxColors: number, Outdepth: number?)
 	-- XXX: generate the new colors from the histo and return
 	if #Histo <= MaxColors then
         --[[
-        -- Ported mostly from:
-        -- https://github.com/DanBloomberg/leptonica/blob/e09c1f283aa5a896facc297b617775373519d450/src/colorquant2.c#L391
-        local ColorAmount = 0
+		-- Ported mostly from:
+		-- https://github.com/DanBloomberg/leptonica/blob/e09c1f283aa5a896facc297b617775373519d450/src/colorquant2.c#L391
+	        local ColorAmount = 0
 
-        for Index = 1, HistoSize do
-            if Histo[Index] then
-                ColorAmount += 1
-            end
-        end
+	        for Index = 1, HistoSize do
+	            if Histo[Index] > 0 then
+	                ColorAmount += 1
+	            end
+	        end
 
-        local Outdepth = Outdepth or if ColorAmount <= 2 then
-		1
-            elseif ColorAmount <= 4 then
-                2
-            elseif ColorAmount <= 16
-                4
-            else
-                8
-        local PixelsSize = bit32.lshift(1, Outdepth)
-        local ColorMapPixels = table.create(PixelsSize)        
+		local Outdepth = Outdepth or if ColorAmount <= 2 then
+			1
+            	elseif ColorAmount <= 4 then
+			2
+            	elseif ColorAmount <= 16
+			4
+           	 else
+			8
+		local PixelsSize = bit32.lshift(1, Outdepth)
+		local Colors = table.create(PixelsSize)        
 
-        for Index = 1, HistoSize do
-            if Histo[Index] then
-                local RedValue = bit32.lshift(bit32.rshift(Index, (2 * Sigbits)), RShift)
-                local GreenValue = bit32.lshift(bit32.band(bit32.rshift(Index, Sigbits), Mask), RShift)
-                local BlueValue = bit32.lshift(bit32.band(Index, Mask), RShift)
-                
-                if #ColorMapPixels + 1 > PixelsSize then
-                    break
-                else
-                    local Pixel = table.create(3)
-                    Pixel[1] = RedValue
-                    Pixel[2] = GreenValue
-                    Pixel[3] = BlueValue
-                    ColorMapPixels[#ColorMapPixels + 1] = Pixel
-                end
+		for Index = 1, HistoSize do
+			if Histo[Index] > 0 then
+				local RedValue = bit32.lshift(bit32.rshift(Index, (2 * Sigbits)), RShift)
+				local GreenValue = bit32.lshift(bit32.band(bit32.rshift(Index, Sigbits), Mask), RShift)
+		                local BlueValue = bit32.lshift(bit32.band(Index, Mask), RShift)
 
-                Histo[Index] = Index + 1
-            end
-        end
+				local Pixel = table.create(3)
+				Pixel[1] = RedValue
+				Pixel[2] = GreenValue
+				Pixel[3] = BlueValue
+				Colors[#Colors + 1] = Pixel
+
+				if #Colors > PixelsSize then break end
+				Histo[Index] = Index + 1
+			end
+		end
+
+		-- Remove :Palette(), and replace with just having an array of rgb arrays?
+		-- and just freeze the palette in the metatable?
+		return (setmetatable({
+			Palette = Colors,
+			__sorted = true,
+		}, ColorMapPrototype) :: any) :: ColorMap
         --]]
 	end
 
