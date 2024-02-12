@@ -580,13 +580,12 @@ local function Quantize(Pixels: {}, MaxColors: number, Outdepth: number?)
 		error("[Quantize] Pixel array must have atleast 1 index")
 	elseif MaxColors < 2 or MaxColors > 256 then
 		error("[Quantize] MaxColors has to be in range 2..256")
-    elseif Outdepth then
-        if Outdepth ~= 1 or Outdepth ~= 2 or Outdepth ~= 4 or Outdepth ~= 8 then
-            error("[Quantize] Outdepth does not equal 1, 2, 4, or 8")
-        elseif MaxColors > 2 ^ Outdepth then 
-            error("[Quantize] MaxColors is greater than 2 ^ Outdepth")
-        end
-    elseif
+	elseif Outdepth then
+		if Outdepth ~= 1 or Outdepth ~= 2 or Outdepth ~= 4 or Outdepth ~= 8 then
+			error("[Quantize] Outdepth does not equal 1, 2, 4, or 8")
+		elseif MaxColors > 2 ^ Outdepth then 
+            		error("[Quantize] MaxColors is greater than 2 ^ Outdepth")
+		end
 	end
 	local NewPixels: {Pixel} = if typeof(Pixels[1]) == "table" then Pixels else table.clone(Pixels)
 
