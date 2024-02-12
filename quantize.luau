@@ -12,15 +12,13 @@ type Comparator = (A: VolumeBox, B: VolumeBox) -> boolean
 
 type ColorMapPrototype = {
     -- ForceBW renamed to Greyscale
-    Greyscale: ((self: ColorMap, CreateCopy: false?) -> ())
-        & ((self: ColorMap, CreateCopy: true) -> ColorMap),
+	Greyscale: ((self: ColorMap, CreateCopy: false?) -> ())
+		& ((self: ColorMap, CreateCopy: true) -> ColorMap),
 	Nearest: ((self: ColorMap, Pixel: Pixel) -> Pixel) 
 		& ((self: ColorMap, Color3: Color3) -> Pixel),
 	Map: ((self: ColorMap, Pixel: Pixel) -> Pixel) 
 		& ((self: ColorMap, Color3: Color3) -> Pixel),
-	-- Push: (self: ColorMap, VolumeBox: VolumeBox),
 	Palette: (self: ColorMap) -> {Pixel},
-	-- Pop: (self: ColorMap) -> VolumeBox,
 
 	-- .size() method changed out to use the __len metamethod
 	-- for consistency w lua
@@ -310,10 +308,10 @@ function ColorMapPrototype.Map(self: ColorMap, PixelOrColor3: Pixel | Color3)
 end
 
 function ColorMapPrototype.Greyscale(self: ColorMap, CreateCopy: boolean?)
-    local ColorMap = if not CreateCopy then self else setmetatable({
-        VolumeBoxes = self.VolumeBoxes,
+	local ColorMap = if not CreateCopy then self else setmetatable({
+		VolumeBoxes = self.VolumeBoxes,
 		__sorted = self.__sorted,
-    }, ColorMapPrototype)
+	}, ColorMapPrototype)
 
 	-- XXX: won't  work yet
 	table.sort(ColorMap.VolumeBoxes, function(A, B)
@@ -336,15 +334,8 @@ function ColorMapPrototype.Greyscale(self: ColorMap, CreateCopy: boolean?)
 	if HighestPixel[1] > 251 and HighestPixel[2] > 251 and HighestPixel[3] > 251 then
 		Highest.__average_pixel = table.create(3, 255)
 	end
-    return if CreateCopy then ColorMap else nil
+	return if CreateCopy then ColorMap else nil
 end
-
---[[
-	function ColorMapPrototype.Push(self: ColorMap, VolumeBox: VolumeBox)
-		table.insert(self.VolumeBoxes, VolumeBox)
-		self.__sorted = false
-	end
---]]
 	
 function ColorMapPrototype.Palette(self: ColorMap)
 	local Pixels = table.create(#self.VolumeBoxes)
@@ -358,13 +349,6 @@ end
 function ColorMapPrototype.__len(self: ColorMap)
 	return #self.VolumeBoxes
 end
-	
---[[
-	function ColorMapPrototype.Pop(self: ColorMap)
-		SortColorMap(self, OccupancySizeSort)
-		return table.remove(self.VolumeBoxes, #self.VolumeBoxes)
-	end
---]]
 
 local function VolumeBoxFromPixels(Pixels: {Pixel}, Histo: {number})
 	local GreenMin = 1000000
@@ -592,23 +576,23 @@ local function Quantize(Pixels: {}, MaxColors: number, Outdepth: number?)
 	-- array clone detection, as a clone wont be equal to the original
 	if Pixels ~= NewPixels then
 		for Index, Value in NewPixels do
-            local NewPixel = GetOrCreatePixel(Value)
+ 			local NewPixel = GetOrCreatePixel(Value)
 			
-            if NewPixel[1] > 255 or NewPixel[1] < 0 then
-                error(string.format(InvalidPixelAtIndexFormat, "Red", Index), 2)
-            elseif NewPixel[2] > 255 or NewPixel[2] < 0 then
-                error(string.format(InvalidPixelAtIndexFormat, "Green", Index), 2)
-            elseif NewPixel[3] > 255 or NewPixel[3] < 0 then
-                error(string.format(InvalidPixelAtIndexFormat, "Blue", Index), 2)
-            end
-            NewPixels[Index] = NewPixel
+			if NewPixel[1] > 255 or NewPixel[1] < 0 then
+				error(string.format(InvalidPixelAtIndexFormat, "Red", Index), 2)
+			elseif NewPixel[2] > 255 or NewPixel[2] < 0 then
+				error(string.format(InvalidPixelAtIndexFormat, "Green", Index), 2)
+			elseif NewPixel[3] > 255 or NewPixel[3] < 0 then
+				error(string.format(InvalidPixelAtIndexFormat, "Blue", Index), 2)
+			end
+			NewPixels[Index] = NewPixel
 		end
 	end
 
 	-- XXX: check color content and convert to grayscale if insufficient
-    -- histo (1-d array, giving the number of pixels in
-    -- each quantized region of color space), or nil on error
-    local Histo = table.create(HistoSize)
+	-- histo (1-d array, giving the number of pixels in
+	-- each quantized region of color space), or nil on error
+	local Histo = table.create(HistoSize)
 	
 	for _, Pixel in NewPixels do
 		local Index = GetColorIndex(
@@ -619,7 +603,7 @@ local function Quantize(Pixels: {}, MaxColors: number, Outdepth: number?)
 		Histo[Index] = (Histo[Index] or 0) + 1
 	end
 
-    -- XXX: generate the new colors from the histo and return
+	-- XXX: generate the new colors from the histo and return
 	if #Histo <= MaxColors then
         --[[
         -- Ported mostly from:
@@ -633,7 +617,7 @@ local function Quantize(Pixels: {}, MaxColors: number, Outdepth: number?)
         end
 
         local Outdepth = Outdepth or if ColorAmount <= 2 then
-                1
+		1
             elseif ColorAmount <= 4 then
                 2
             elseif ColorAmount <= 16
