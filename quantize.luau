@@ -77,6 +77,7 @@ local Sigbits = 5
 local HistoSize = bit32.lshift(1, 3 * Sigbits)
 local RShift = 8 - Sigbits
 local VboxAvgMult = bit32.lshift(1, RShift)
+local Mask = bit32.rshift(0xff, RShift)
 
 local function GetOrCreatePixel(PixelOrColor3: Pixel | Color3): Pixel
 	if typeof(PixelOrColor3) == "table" then
@@ -573,12 +574,19 @@ local function Iterate(Target: number, ColorMap: ColorMap, Histo: {number}, Comp
 	end
 end
 
-local function Quantize(Pixels: {}, MaxColors: number)
+local function Quantize(Pixels: {}, MaxColors: number, Outdepth: number?)
 	-- short-circuit
 	if #Pixels == 0 then
 		error("[Quantize] Pixel array must have atleast 1 index")
 	elseif MaxColors < 2 or MaxColors > 256 then
 		error("[Quantize] MaxColors has to be in range 2..256")
+    elseif Outdepth then
+        if Outdepth ~= 1 or Outdepth ~= 2 or Outdepth ~= 4 or Outdepth ~= 8 then
+            error("[Quantize] Outdepth does not equal 1, 2, 4, or 8")
+        elseif MaxColors > 2 ^ Outdepth then 
+            error("[Quantize] MaxColors is greater than 2 ^ Outdepth")
+        end
+    elseif
 	end
 	local NewPixels: {Pixel} = if typeof(Pixels[1]) == "table" then Pixels else table.clone(Pixels)
 
@@ -612,8 +620,50 @@ local function Quantize(Pixels: {}, MaxColors: number)
 		Histo[Index] = (Histo[Index] or 0) + 1
 	end
 
+    -- XXX: generate the new colors from the histo and return
 	if #Histo <= MaxColors then
-		-- XXX: generate the new colors from the histo and return
+        --[[
+        -- Ported mostly from:
+        -- https://github.com/DanBloomberg/leptonica/blob/e09c1f283aa5a896facc297b617775373519d450/src/colorquant2.c#L391
+        local ColorAmount = 0
+
+        for Index = 1, HistoSize do
+            if Histo[Index] then
+                ColorAmount += 1
+            end
+        end
+
+        local Outdepth = Outdepth or if ColorAmount <= 2 then
+                1
+            elseif ColorAmount <= 4 then
+                2
+            elseif ColorAmount <= 16
+                4
+            else
+                8
+        local PixelsSize = bit32.lshift(1, Outdepth)
+        local ColorMapPixels = table.create(PixelsSize)        
+
+        for Index = 1, HistoSize do
+            if Histo[Index] then
+                local RedValue = bit32.lshift(bit32.rshift(Index, (2 * Sigbits)), RShift)
+                local GreenValue = bit32.lshift(bit32.band(bit32.rshift(Index, Sigbits), Mask), RShift)
+                local BlueValue = bit32.lshift(bit32.band(Index, Mask), RShift)
+                
+                if #ColorMapPixels + 1 > PixelsSize then
+                    break
+                else
+                    local Pixel = table.create(3)
+                    Pixel[1] = RedValue
+                    Pixel[2] = GreenValue
+                    Pixel[3] = BlueValue
+                    ColorMapPixels[#ColorMapPixels + 1] = Pixel
+                end
+
+                Histo[Index] = Index + 1
+            end
+        end
+        --]]
 	end
 
 	-- get the beginning vbox from the colors
