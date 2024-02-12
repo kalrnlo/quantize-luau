@@ -578,7 +578,7 @@ local function Quantize(Pixels: {}, MaxColors: number)
 	if #Pixels == 0 then
 		error("[Quantize] Pixel array must have atleast 1 index")
 	elseif MaxColors < 2 or MaxColors > 256 then
-		error("[Quantize] MaxColors has to be in range(2..256)")
+		error("[Quantize] MaxColors has to be in range 2..256")
 	end
 	local NewPixels: {Pixel} = if typeof(Pixels[1]) == "table" then Pixels else table.clone(Pixels)
 

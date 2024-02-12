@@ -19,9 +19,13 @@ local ColorMap = Quantize(ArrayOfPixels, MaxColors)
 `````
 
 * `Pixels` - An array of pixels (represented as {R,G,B arrays}) or Color3s to quantize
+<<<<<<< HEAD
+* `MaxColors` - The maximum number of colors allowed in the reduced palette, must be within 2 to 256
+=======
 * `MaxColors` - The maximum number of colours allowed in the reduced palette, must be within 2 to 256
+>>>>>>> 5afa9bd61431afa22f2f039bf79eae47f42018a3
 
-##### Reduced Palette
+#### Reduced Palette
 
 The `:Palette()` method returns an array that contains the reduced color palette.
 
@@ -31,7 +35,7 @@ ColorMap:Palette()
 -- {{204, 204, 204}, {208,212,212}, {188,196,188}, {212,204,196}}
 `````
 
-##### Reduced pixel
+#### Reduced pixel
 
 The `:Map(Pixel)` method maps an individual pixel or Color3 to the reduced color palette.
 
