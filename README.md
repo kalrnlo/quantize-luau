@@ -23,11 +23,11 @@ local ColorMap = Quantize(ArrayOfPixels, MaxColors)
 
 #### Reduced Palette
 
-The `:Palette()` method returns an array that contains the reduced color palette.
+The `.Palette` property is an array that contains the reduced color palette.
 
 `````lua
 -- Returns the reduced palette
-ColorMap:Palette()
+ColorMap.Palette
 -- {{204, 204, 204}, {208,212,212}, {188,196,188}, {212,204,196}}
 `````
 
