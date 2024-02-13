@@ -29,7 +29,7 @@ local Quantize = require(Path.To.Quantize)
 local ArrayOfPixels = {{190,197,190}, {202,204,200}, {207,214,210}, {211,214,211}, {205,207,207}}
 local MaxColors = 4
 
-local ColorMap = Quantize.General(ArrayOfPixels, MaxColors)
+local ColorMap = Quantize.Mixed(ArrayOfPixels, MaxColors)
 `````
 
 * `Pixels` - An array of pixels (represented as {R,G,B arrays}) or Color3s to quantize
@@ -42,7 +42,7 @@ local Quantize = require(Path.To.Quantize)
 local ArrayOfPixels = {{190,197,190}, {202,204,200}, {207,214,210}, {211,214,211}, {205,207,207}}
 local MaxColors = 4
 
-local ColorMap = Quantize.General(ArrayOfPixels, MaxColors)
+local ColorMap = Quantize.MixedFewColors(ArrayOfPixels, MaxColors)
 `````
 
 * `Pixels` - An array of pixels (represented as {R,G,B arrays}) or Color3s to quantize
