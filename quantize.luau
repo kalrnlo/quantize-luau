@@ -12,6 +12,19 @@
 
 type Comparator = (A: VolumeBox, B: VolumeBox) -> boolean
 
+-- Replacement for volume boxes so stuff like map will still work possibly?
+type ColorData = {
+	RedMin: number,
+	RedMax: number,
+	GreenMin: number,
+	GreenMax: number,
+	BlueMin: number,
+	BlueMax: number,
+	RGB: {number}
+} | {
+	RGB: {number}
+}
+
 type PriorityQueue = {
 	VolumeBoxes: {VolumeBox},
 	__sorted: boolean
