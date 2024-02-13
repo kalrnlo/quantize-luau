@@ -8,26 +8,41 @@
 -- @Kalrnlo
 -- 09/02/2024
 
--- TODO: possibly switch volume boxes over to using 
-
 type Comparator = (A: VolumeBox, B: VolumeBox) -> boolean
 
+type BaseColorData = {
+	Pixel: Pixel
+}
+
 -- Replacement for volume boxes so stuff like map will still work possibly?
-type ColorData = {
+type VolumeColorData =  BaseColorData & {
 	RedMin: number,
 	RedMax: number,
 	GreenMin: number,
 	GreenMax: number,
 	BlueMin: number,
-	BlueMax: number,
-	RGB: {number}
-} | {
-	RGB: {number}
+	BlueMax: number
 }
+
+type ColorData = BaseColorData | VolumeColorData
 
 type PriorityQueue = {
 	VolumeBoxes: {VolumeBox},
 	__sorted: boolean
+}
+
+type GeneralQuantizeOptions = {
+	Outdepth: number?,
+	Height: number?,
+	Width: number?,
+}
+
+type MixedQuantizeOptions = {
+	LightThreshold: number?,
+	DiffThreshold: number?,
+	DarkThreshold: number?,
+	Height: number?,
+	Width: number?,
 }
 
 type ColorMapPrototype = {
@@ -69,8 +84,7 @@ export type VolumeBox = typeof(setmetatable({} :: {
 }, {} :: VolumeBoxPrototype))
 
 export type ColorMap = typeof(setmetatable({} :: {
-	VolumeBoxes: {VolumeBox}?,
-	Palette: {Pixel}
+	Colors: {ColorData}
 }, {} :: ColorMapPrototype))
 
 --[[
