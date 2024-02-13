@@ -53,7 +53,7 @@ local ColorMap = Quantize.MixedFewColors(ArrayOfPixels, MaxColors)
 
 #### Reduced Palette
 
-The `:Palette` method returns an array that contains the reduced color palette.
+The `:Palette()` method returns an array that contains the reduced color palette.
 
 `````lua
 -- Returns the reduced palette
