@@ -8,33 +8,31 @@
 -- @Kalrnlo
 -- 09/02/2024
 
+-- TODO: possibly switch volume boxes over to using 
+
 type Comparator = (A: VolumeBox, B: VolumeBox) -> boolean
 
 type ColorMapPrototype = {
-    -- ForceBW renamed to Greyscale
+	-- ForceBW renamed to Greyscale
 	Greyscale: ((self: ColorMap, CreateCopy: false?) -> ())
 		& ((self: ColorMap, CreateCopy: true) -> ColorMap),
 	Nearest: ((self: ColorMap, Pixel: Pixel) -> Pixel) 
 		& ((self: ColorMap, Color3: Color3) -> Pixel),
 	Map: ((self: ColorMap, Pixel: Pixel) -> Pixel) 
 		& ((self: ColorMap, Color3: Color3) -> Pixel),
-	Palette: (self: ColorMap) -> {Pixel},
 
-	-- .size() method changed out to use the __len metamethod
-	-- for consistency w lua
 	__len: (self: ColorMap) -> number,
 	__index: ColorMapPrototype,
 }
 
 type VolumeBoxPrototype = {
-	Contains: ((self: VolumeBox, Pixel: Pixel) -> boolean) 
-		& ((self: VolumeBox, Color3: Color3) -> boolean),
+	Contains: (self: VolumeBox, Pixel: Pixel) -> boolean,
 	Volume: (self: VolumeBox, Force: boolean?) -> number,
 	Average: (self: VolumeBox, Force: boolean?) -> Pixel,
 	Count: (self: VolumeBox, Force: boolean?) -> number,
 	Copy: (self: VolumeBox) -> VolumeBox,
 
- 	__len: (self: VolumeBox) -> number,
+	__len: (self: VolumeBox) -> number,
 	__index: VolumeBoxPrototype,
 }
 
@@ -53,8 +51,8 @@ export type VolumeBox = typeof(setmetatable({} :: {
 }, {} :: VolumeBoxPrototype))
 
 export type ColorMap = typeof(setmetatable({} :: {
-	VolumeBoxes: {VolumeBox},
-	__sorted: boolean,
+	VolumeBoxes: {VolumeBox}?,
+	Palette: {Pixel}
 }, {} :: ColorMapPrototype))
 
 --[[
@@ -69,14 +67,18 @@ export type ColorMap = typeof(setmetatable({} :: {
 export type Pixel = {number}
 
 local InvalidPixelAtIndexFormat = "[Quantize] %s value in Pixel at index &d, is not in range 0..255"
+local ConversionHex = 0xFFFFFFFF
 local FractByPopulations = 0.75	
 local MaxIterations = 1000
 local Sigbits = 5
+local Shift = 8 - Sigbits
 local HistoSize = bit32.lshift(1, 3 * Sigbits)
-local RShift = 8 - Sigbits
-local VboxAvgMult = bit32.lshift(1, RShift)
-local Mask = bit32.rshift(0xff, RShift)
-local ConversionHex = 0xFFFFFFFF
+local VboxAvgMult = bit32.lshift(1, Shift)
+local PaletteSize16 = bit32.lshift(1, 4)
+local PaletteSize2 = bit32.lshift(1, 1)
+local PaletteSize4 = bit32.lshift(1, 2)
+local PaletteSize0 = bit32.lshift(1, 8)
+local Mask = bit32.rshift(0xff, Shift)
 
 local function GetOrCreatePixel(PixelOrColor3: Pixel | Color3): Pixel
 	if typeof(PixelOrColor3) == "table" then
@@ -173,9 +175,9 @@ VolumeBoxPrototype.__index = VolumeBoxPrototype
 	
 function VolumeBoxPrototype.Contains(self: VolumeBox, PixelOrColor3: Pixel | Color3)
 	local Pixel = CheckPixel(GetOrCreatePixel(PixelOrColor3))
-	local RedValue = bit32.rshift(Pixel[1], RShift)
-	local GreenValue = bit32.rshift(Pixel[2], RShift)
-	local BlueValue = bit32.rshift(Pixel[3], RShift)
+	local RedValue = bit32.rshift(Pixel[1], Shift)
+	local GreenValue = bit32.rshift(Pixel[2], Shift)
+	local BlueValue = bit32.rshift(Pixel[3], Shift)
            
 	return RedValue >= self.RedMin and RedValue <= self.RedMax and
 		GreenValue >= self.GreenMin and GreenValue <= self.GreenMax and
@@ -297,11 +299,7 @@ function ColorMapPrototype.Map(self: ColorMap, PixelOrColor3: Pixel | Color3)
 	local Pixel = CheckPixel(GetOrCreatePixel(PixelOrColor3))
 
 	for _, VolumeBox in self.VolumeBoxes do
-		if 
-			VolumeBox:Average()[1] == Pixel[1] and
-			VolumeBox:Average()[2] == Pixel[2] and
-			VolumeBox:Average()[3] == Pixel[3]
-		then
+		if VolumeBox:Contains(Pixel) then
 			return VolumeBox:Average()
 		end
 	end
@@ -337,7 +335,8 @@ function ColorMapPrototype.Greyscale(self: ColorMap, CreateCopy: boolean?)
 	end
 	return if CreateCopy then ColorMap else nil
 end
-	
+
+--[[
 function ColorMapPrototype.Palette(self: ColorMap)
 	local Pixels = table.create(#self.VolumeBoxes)
 		
@@ -346,6 +345,7 @@ function ColorMapPrototype.Palette(self: ColorMap)
 	end
 	return Pixels
 end
+--]]
 			
 function ColorMapPrototype.__len(self: ColorMap)
 	return #self.VolumeBoxes
@@ -360,9 +360,9 @@ local function VolumeBoxFromPixels(Pixels: {Pixel}, Histo: {number})
 	local RedMax = 0
 				
 	for _, Pixel in Pixels do
-		local GreenValue = bit32.rshift(Pixel[2], RShift)
-		local BlueValue =  bit32.rshift(Pixel[3], RShift)
-		local RedValue = bit32.rshift(Pixel[1], RShift)
+		local GreenValue = bit32.rshift(Pixel[2], Shift)
+		local BlueValue =  bit32.rshift(Pixel[3], Shift)
+		local RedValue = bit32.rshift(Pixel[1], Shift)
 
 		if RedValue < RedMin then 
 			RedMin = RedValue
@@ -601,94 +601,76 @@ local function Quantize(Pixels: {}, MaxColors: number, Outdepth: number?)
 	
 	for _, Pixel in NewPixels do
 		local Index = GetColorIndex(
-			bit32.rshift(Pixel[1], RShift),
-			bit32.rshift(Pixel[2], RShift),
-			bit32.rshift(Pixel[3], RShift)
+			bit32.rshift(Pixel[1], Shift),
+			bit32.rshift(Pixel[2], Shift),
+			bit32.rshift(Pixel[3], Shift)
 		)
 		Histo[Index] = (Histo[Index] or 0) + 1
 	end
 
 	-- XXX: generate the new colors from the histo and return
-	if #Histo <= MaxColors then
-        --[[
-		-- Ported mostly from:
-		-- https://github.com/DanBloomberg/leptonica/blob/e09c1f283aa5a896facc297b617775373519d450/src/colorquant2.c#L391
-	        local ColorAmount = 0
+	-- Ported mostly from:
+	-- https://github.com/DanBloomberg/leptonica/blob/e09c1f283aa5a896facc297b617775373519d450/src/colorquant2.c#L391
+	if #Histo > MaxColors then
+		local ColorAmount = Outdepth or 0
 
-	        for Index = 1, HistoSize do
-	            if Histo[Index] > 0 then
-	                ColorAmount += 1
-	            end
-	        end
-
-		local Outdepth = Outdepth or if ColorAmount <= 2 then
-			1
-            	elseif ColorAmount <= 4 then
-			2
-            	elseif ColorAmount <= 16
-			4
-           	 else
-			8
-		local PixelsSize = bit32.lshift(1, Outdepth)
-		local Colors = table.create(PixelsSize)        
-
-		for Index = 1, HistoSize do
-			if Histo[Index] > 0 then
-				local RedValue = bit32.lshift(bit32.rshift(Index, (2 * Sigbits)), RShift)
-				local GreenValue = bit32.lshift(bit32.band(bit32.rshift(Index, Sigbits), Mask), RShift)
-		                local BlueValue = bit32.lshift(bit32.band(Index, Mask), RShift)
-
-				local Pixel = table.create(3)
-				Pixel[1] = RedValue
-				Pixel[2] = GreenValue
-				Pixel[3] = BlueValue
-				Colors[#Colors + 1] = Pixel
-
-				if #Colors > PixelsSize then break end
-				Histo[Index] = Index + 1
+		if not Outdepth then
+			for Index = 1, HistoSize do
+				if Histo[Index] then
+					ColorAmount += 1
+				end
 			end
 		end
 
-		-- Remove :Palette(), and replace with just having an array of rgb arrays?
-		-- and just freeze the palette in the metatable?
-		return (setmetatable({
-			Palette = Colors,
-			__sorted = true,
-		}, ColorMapPrototype) :: any) :: ColorMap
-        --]]
-	end
+		local PaletteSize = if ColorAmount <= 2 then
+				PaletteSize2
+            elseif ColorAmount <= 4 then
+				PaletteSize4
+            elseif ColorAmount <= 16 then
+				PaletteSize16
+			else
+				PaletteSize0
+		local Palette = table.create(PaletteSize)        
 
-	-- get the beginning vbox from the colors
-	local VolumeBox = VolumeBoxFromPixels(NewPixels, Histo)
-	local VolumeBoxes = table.create(1, VolumeBox)
-	local ColorMap: ColorMap = setmetatable({
-		VolumeBoxes = VolumeBoxes,
-		__sorted = false,
-	}, ColorMapPrototype) :: any
+		for Index = 1, HistoSize do
+			if Histo[Index] then
+				local Pixel = table.create(3)
+				Pixel[1] = bit32.lshift(bit32.rshift(Index, (2 * Sigbits)), Shift)
+				Pixel[2] = bit32.lshift(bit32.band(bit32.rshift(Index, Sigbits), Mask), Shift)
+				Pixel[3] = bit32.lshift(bit32.band(Index, Mask), Shift)
+				Palette[#Palette + 1] = Pixel
+
+				if #Colors > PaletteSize then break end
+				Histo[Index] = Index + 1
+			end
+		end
+		return (setmetatable({Palette = Palette}, ColorMapPrototype) :: any) :: ColorMap
+	else	
+		-- get the beginning vbox from the colors
+		local VolumeBox = VolumeBoxFromPixels(NewPixels, Histo)
+		local VolumeBoxes = table.create(1, VolumeBox)
+		local ColorMap: ColorMap = setmetatable({
+			VolumeBoxes = VolumeBoxes,
+			__sorted = false,
+		}, ColorMapPrototype) :: any
   
-	-- first set of colors, sorted by population
-	Iterate(FractByPopulations * MaxColors, ColorMap, Histo, CountSort)
+		-- first set of colors, sorted by population
+		Iterate(FractByPopulations * MaxColors, ColorMap, Histo, CountSort)
 
-	-- Re-sort by the product of pixel occupancy times the size in color space.
-	-- deviation: rather than creating a whole new queue to basically
-	-- reverse the queue, we just reverse the queue
-	SortColorMap(ColorMap, CountSort)
-	ReverseTable(VolumeBoxes)
+		-- Re-sort by the product of pixel occupancy times the size in color space.
+		-- deviation: rather than creating a whole new queue to basically
+		-- reverse the queue, we just reverse the queue
+		SortColorMap(ColorMap, CountSort)
+		ReverseTable(VolumeBoxes)
 
-	-- next set - generate the median cuts using the (npix * vol) sorting.
-	Iterate(MaxColors, ColorMap, Histo, OccupancySizeSort)
+		-- next set - generate the median cuts using the (npix * vol) sorting.
+		Iterate(MaxColors, ColorMap, Histo, OccupancySizeSort)
 
-	-- calculate the actual colors
-	-- deviation: reversing again
-	--[[ jsver:
-	    var cmap = new CMap();
-        while (pq2.size()) {
-            cmap.push(pq2.pop());
-        }
-	--]]
-	SortColorMap(ColorMap, OccupancySizeSort)
-	ReverseTable(VolumeBoxes)
-	return ColorMap
+		-- calculate the actual colors
+		SortColorMap(ColorMap, OccupancySizeSort)
+		ReverseTable(VolumeBoxes)
+		return ColorMap
+	end
 end
 
-return Quantize :: ((Pixels: {Pixel}, MaxColors: number) -> ColorMap) & ((Color3s: {Color3}, MaxColors: number) -> ColorMap)
+return Quantize :: ((Pixels: {Pixel}, MaxColors: number, Outdepth: number?) -> ColorMap) & ((Color3s: {Color3}, MaxColors: number, Outdepth: number?) -> ColorMap)
