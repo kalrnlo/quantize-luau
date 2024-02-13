@@ -12,6 +12,11 @@
 
 type Comparator = (A: VolumeBox, B: VolumeBox) -> boolean
 
+type PriorityQueue = {
+	VolumeBoxes: {VolumeBox},
+	__sorted: boolean
+}
+
 type ColorMapPrototype = {
 	-- ForceBW renamed to Greyscale
 	Greyscale: ((self: ColorMap, CreateCopy: false?) -> ())
@@ -103,10 +108,10 @@ local function CheckPixel(Pixel: Pixel)
         return Pixel
 end
 
-local function SortColorMap(ColorMap: ColorMap, Comparator: Comparator)
-	if not ColorMap.__sorted then
-		table.sort(ColorMap.VolumeBoxes, Comparator)
-		ColorMap.__sorted = true
+local function SortQueue(Queue: PriorityQueue, Comparator: Comparator)
+	if not Queue.__sorted then
+		table.sort(Queue.VolumeBoxes, Comparator)
+		Queue.__sorted = true
 	end
 end
 		
@@ -278,29 +283,31 @@ ColorMapPrototype.__index = ColorMapPrototype
 function ColorMapPrototype.Nearest(self: ColorMap, PixelOrColor3: Pixel | Color3)
 	local Pixel = CheckPixel(GetOrCreatePixel(PixelOrColor3))
 	local D1 = math.huge
-	local NearestPixel
+	local Nearest
 			
-	for _, VolumeBox in self.VolumeBoxes do
+	for _, Color in self.Palette do
 		local D2 = math.sqrt(
-			math.pow(Pixel[1] - VolumeBox:Average()[1], 2) +
-			math.pow(Pixel[2] - VolumeBox:Average()[2], 2) +
-			math.pow(Pixel[3] - VolumeBox:Average()[3], 2)
+			math.pow(Pixel[1] - Color[1], 2) +
+			math.pow(Pixel[2] - Color[2], 2) +
+			math.pow(Pixel[3] - Color[3], 2)
 		)
 		
 		if D2 < D1 then
-			NearestPixel = VolumeBox:Average()
+			Nearest = Color
 			D1 = D2
 		end
 	end	
-	return NearestPixel
+	return Nearest
 end
 
 function ColorMapPrototype.Map(self: ColorMap, PixelOrColor3: Pixel | Color3)
 	local Pixel = CheckPixel(GetOrCreatePixel(PixelOrColor3))
 
-	for _, VolumeBox in self.VolumeBoxes do
-		if VolumeBox:Contains(Pixel) then
-			return VolumeBox:Average()
+	if self.VolumeBoxes then
+		for _, VolumeBox in self.VolumeBoxes do
+			if VolumeBox:Contains(Pixel) then
+				return VolumeBox:Average()
+			end
 		end
 	end
 	return self:Nearest(Pixel)
@@ -309,43 +316,30 @@ end
 function ColorMapPrototype.Greyscale(self: ColorMap, CreateCopy: boolean?)
 	local ColorMap = if not CreateCopy then self else setmetatable({
 		VolumeBoxes = self.VolumeBoxes,
-		__sorted = self.__sorted,
+		Palette = self.Palette
 	}, ColorMapPrototype)
 
 	-- XXX: won't  work yet
-	table.sort(ColorMap.VolumeBoxes, function(A, B)
-		return GetArraySum(A:Average()) > GetArraySum(B:Average())
+	table.sort(ColorMap.Palette, function(A, B)
+		return GetArraySum(A) > GetArraySum(B)
 	end)
 
 	-- force darkest color to black if everything < 5
-	local Lowest = ColorMap.VolumeBoxes[1]
-	local LowestPixel = Lowest:Average()
+	local Lowest = ColorMap.Palette[1]
 	
-	if LowestPixel[1] < 5 and LowestPixel[2] < 5 and LowestPixel[3] < 5 then
-		Lowest.__average_pixel = table.create(3, 0)
+	if Lowest[1] < 5 and Lowest[2] < 5 and Lowest[3] < 5 then
+		Lowest = table.create(3, 0)
 	end
 
 	-- force lightest color to white if everything > 251
 	-- deviation: switched #VolumeBoxes - 1 to just #VolumeBoxes
-	local Highest = ColorMap.VolumeBoxes[#ColorMap.VolumeBoxes]
-	local HighestPixel = Highest:Average()
+	local Highest = ColorMap.Palette[#ColorMap.Palette]
 
-	if HighestPixel[1] > 251 and HighestPixel[2] > 251 and HighestPixel[3] > 251 then
+	if Highest[1] > 251 and Highest[2] > 251 and Highest[3] > 251 then
 		Highest.__average_pixel = table.create(3, 255)
 	end
 	return if CreateCopy then ColorMap else nil
 end
-
---[[
-function ColorMapPrototype.Palette(self: ColorMap)
-	local Pixels = table.create(#self.VolumeBoxes)
-		
-	for Index, VolumeBox in self.VolumeBoxes do
-		Pixels[Index] = table.clone(VolumeBox:Average())
-	end
-	return Pixels
-end
---]]
 			
 function ColorMapPrototype.__len(self: ColorMap)
 	return #self.VolumeBoxes
@@ -516,8 +510,8 @@ local function MedianCutApply(Histo: {number}, VolumeBox: VolumeBox): {VolumeBox
 end
 
 -- inner function to do the iteration
-local function Iterate(Target: number, ColorMap: ColorMap, Histo: {number}, Comparator: Comparator)
-	local PixelCount = #ColorMap.VolumeBoxes
+local function Iterate(Target: number, Queue: PriorityQueue, Histo: {number}, Comparator: Comparator)
+	local PixelCount = #Queue.VolumeBoxes
 	local Niters = 0
 
 	while Niters < MaxIterations do
@@ -531,16 +525,16 @@ local function Iterate(Target: number, ColorMap: ColorMap, Histo: {number}, Comp
 			end
 		--]]
 
-		SortColorMap(ColorMap, Comparator)
-		local VolumeBox = table.remove(ColorMap.VolumeBoxes) :: VolumeBox
+		SortQueue(Queue, Comparator)
+		local VolumeBox = table.remove(Queue.VolumeBoxes) :: VolumeBox
 
 		-- just put it back
 		if #VolumeBox == 0 then
-			table.insert(ColorMap.VolumeBoxes, VolumeBox)
+			table.insert(Queue.VolumeBoxes, VolumeBox)
 			Niters += 1
 			continue
 		end
-		ColorMap.__sorted = false
+		Queue.__sorted = false
 
 		-- do the cut
 		local VolumeBoxes = MedianCutApply(Histo, VolumeBox)
@@ -552,10 +546,10 @@ local function Iterate(Target: number, ColorMap: ColorMap, Histo: {number}, Comp
 			warn("[Quantize] VolumeBox1 not defined; shouldn't happen!")
 			return
 		end
-		table.insert(ColorMap.VolumeBoxes, VolumeBoxes[1])
+		table.insert(Queue.VolumeBoxes, VolumeBoxes[1])
 
 		if VolumeBoxes[2] then
-			table.insert(ColorMap.VolumeBoxes, VolumeBoxes[2])
+			table.insert(Queue.VolumeBoxes, VolumeBoxes[2])
 			PixelCount += 1
 		end
 
@@ -624,9 +618,9 @@ local function Quantize(Pixels: {}, MaxColors: number, Outdepth: number?)
 
 		local PaletteSize = if ColorAmount <= 2 then
 				PaletteSize2
-            elseif ColorAmount <= 4 then
+			elseif ColorAmount <= 4 then
 				PaletteSize4
-            elseif ColorAmount <= 16 then
+			elseif ColorAmount <= 16 then
 				PaletteSize16
 			else
 				PaletteSize0
@@ -644,32 +638,42 @@ local function Quantize(Pixels: {}, MaxColors: number, Outdepth: number?)
 				Histo[Index] = Index + 1
 			end
 		end
-		return (setmetatable({Palette = Palette}, ColorMapPrototype) :: any) :: ColorMap
+		return (setmetatable({Palette = Palette}, ColorMapPrototype) :: any
 	else	
 		-- get the beginning vbox from the colors
 		local VolumeBox = VolumeBoxFromPixels(NewPixels, Histo)
 		local VolumeBoxes = table.create(1, VolumeBox)
-		local ColorMap: ColorMap = setmetatable({
+		local PriorityQueue = {
 			VolumeBoxes = VolumeBoxes,
 			__sorted = false,
-		}, ColorMapPrototype) :: any
+		}
   
 		-- first set of colors, sorted by population
-		Iterate(FractByPopulations * MaxColors, ColorMap, Histo, CountSort)
+		Iterate(FractByPopulations * MaxColors, PriorityQueue, Histo, CountSort)
 
 		-- Re-sort by the product of pixel occupancy times the size in color space.
 		-- deviation: rather than creating a whole new queue to basically
 		-- reverse the queue, we just reverse the queue
-		SortColorMap(ColorMap, CountSort)
+		SortQueue(PriorityQueue, CountSort)
 		ReverseTable(VolumeBoxes)
 
 		-- next set - generate the median cuts using the (npix * vol) sorting.
-		Iterate(MaxColors, ColorMap, Histo, OccupancySizeSort)
+		Iterate(MaxColors, PriorityQueue, Histo, OccupancySizeSort)
 
 		-- calculate the actual colors
-		SortColorMap(ColorMap, OccupancySizeSort)
+		SortQueue(PriorityQueue, OccupancySizeSort)
 		ReverseTable(VolumeBoxes)
-		return ColorMap
+
+		local Palette = table.create(#VolumeBoxes)
+
+		for Index, VolumeBox in VolumeBoxes do
+			Palette[Index] = VolumeBox:Average()
+		end
+							
+		return setmetatable({
+			VolumeBoxes = VolumeBoxes,
+			Palette = Palette,
+		}, ColorMapPrototype) :: any
 	end
 end
 
