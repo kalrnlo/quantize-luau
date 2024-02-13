@@ -7,7 +7,7 @@ A fully typed Luau module for MMCQ color quantization. With added support for Co
 API
 --------------
 
-### Quantization Methods
+### Quantization
 
 #### General
 `````lua
