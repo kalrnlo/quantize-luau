@@ -8,6 +8,12 @@
 -- @Kalrnlo
 -- 09/02/2024
 
+-- TODO:
+-- Remove greyscale method, and implement it into the quantize function
+-- like leptronica https://github.com/DanBloomberg/leptonica/blob/e09c1f283aa5a896facc297b617775373519d450/src/colorquant2.c#L533
+-- Remove VolumeBox class and use structs instead for VolumeBox data
+-- Add in Mixed & MixedFewColor quantize methods from leptronica (possibly)
+
 type Comparator = (A: VolumeBox, B: VolumeBox) -> boolean
 
 type BaseColorData = {
@@ -46,13 +52,11 @@ type MixedQuantizeOptions = {
 }
 
 type ColorMapPrototype = {
-	-- ForceBW renamed to Greyscale
-	Greyscale: ((self: ColorMap, CreateCopy: false?) -> ())
-		& ((self: ColorMap, CreateCopy: true) -> ColorMap),
 	Nearest: ((self: ColorMap, Pixel: Pixel) -> Pixel) 
 		& ((self: ColorMap, Color3: Color3) -> Pixel),
 	Map: ((self: ColorMap, Pixel: Pixel) -> Pixel) 
 		& ((self: ColorMap, Color3: Color3) -> Pixel),
+	Palette: (self: ColorMap) -> {Pixel},
 
 	__len: (self: ColorMap) -> number,
 	__index: ColorMapPrototype,
