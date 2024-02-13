@@ -4,7 +4,7 @@ quantize-luau
 A fully typed Luau module for MMCQ color quantization. With added support for Color3s to be used instead of RGB arrays. Based on [quantize.js](https://github.com/olivierlesnicki/quantize) and [Leptonica](https://github.com/DanBloomberg/leptonica/blob/master/src/colorquant2.c).
 
 
-Usage
+API
 --------------
 
 ### Quantization Methods
