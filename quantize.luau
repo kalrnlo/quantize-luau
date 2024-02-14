@@ -21,13 +21,14 @@ type BaseColorData = {
 }
 
 -- Replacement for volume boxes so stuff like map will still work possibly?
-type VolumeColorData =  BaseColorData & {
+type VolumeColorData = {
 	RedMin: number,
 	RedMax: number,
 	GreenMin: number,
 	GreenMax: number,
 	BlueMin: number,
-	BlueMax: number
+	BlueMax: number,
+	Pixel: Pixel,
 }
 
 type ColorData = BaseColorData | VolumeColorData
@@ -38,6 +39,7 @@ type PriorityQueue = {
 }
 
 type GeneralQuantizeOptions = {
+	CheckGreyscale: boolean?,
 	Outdepth: number?,
 	Height: number?,
 	Width: number?,
@@ -88,7 +90,7 @@ export type VolumeBox = typeof(setmetatable({} :: {
 }, {} :: VolumeBoxPrototype))
 
 export type ColorMap = typeof(setmetatable({} :: {
-	Colors: {ColorData}
+	Colors: {BaseColorData | VolumeColorData}
 }, {} :: ColorMapPrototype))
 
 --[[
@@ -116,8 +118,163 @@ local PaletteSize4 = bit32.lshift(1, 2)
 local PaletteSize0 = bit32.lshift(1, 8)
 local Mask = bit32.rshift(0xff, Shift)
 
+--[[
+/* ----------------------------------------------------------------------- *
+ *   Find the fraction of pixels with "color" that are not close to black  *
+ * ----------------------------------------------------------------------- */
+/*!
+ * \brief   pixColorFraction()
+ *
+ * \param[in]    pixs  32 bpp rgb
+ * \param[in]    darkthresh    threshold near black; if the largest (lightest)
+ *                             component is below this, the pixel is not
+ *                             considered in the statistics; typ. 20
+ * \param[in]    lightthresh   threshold near white; if the smallest (darkest)
+ *                             component is above this, the pixel is not
+ *                             considered in the statistics; typ. 244
+ * \param[in]    diffthresh    thresh for the maximum difference between
+ *                             component values; below this the pixel is not
+ *                             considered to have sufficient color
+ * \param[out]   ppixfract     [optional] fraction of pixels in intermediate
+ *                             brightness range that were considered
+ *                             for color content
+ * \param[out]   pcolorfract   [optional] fraction of pixels that meet the
+ *                             criterion for sufficient color; 0.0 on error
+ * \return  0 if OK, 1 on error
+ *
+ * <pre>
+ * Notes:
+ *      (1) This function is asking the question: to what extent does the
+ *          image appear to have color?   The amount of color a pixel
+ *          appears to have depends on both the deviation of the
+ *          individual components from their average and on the average
+ *          intensity itself.  For example, the color will be much more
+ *          obvious with a small deviation from white than the same
+ *          deviation from black.
+ *      (2) Any pixel that meets these three tests is considered a
+ *          colorful pixel:
+ *            (a) the lightest component must equal or exceed %darkthresh
+ *            (b) the darkest component must not exceed %lightthresh
+ *            (c) the max difference between components must equal or
+ *                exceed %diffthresh.
+ *      (3) The dark pixels are removed from consideration because
+ *          they don't appear to have color.
+ *      (4) The very lightest pixels are removed because if an image
+ *          has a lot of "white", the color fraction will be artificially
+ *          low, even if all the other pixels are colorful.
+ *      (5) If pixfract is very small, there are few pixels that are neither
+ *          black nor white.  If colorfract is very small, the pixels
+ *          that are neither black nor white have very little color
+ *          content.  The product 'pixfract * colorfract' gives the
+ *          fraction of pixels with significant color content.
+ *      (6) One use of this function is as a preprocessing step for median
+ *          cut quantization (colorquant2.c), which does a very poor job
+ *          splitting the color space into rectangular volume elements when
+ *          all the pixels are near the diagonal of the color cube.  For
+ *          octree quantization of an image with only gray values, the
+ *          2^(level) octcubes on the diagonal are the only ones
+ *          that can be occupied.
+ * </pre>
+ */
+l_ok
+pixColorFraction(PIX        *pixs,
+                 l_int32     darkthresh,
+                 l_int32     lightthresh,
+                 l_int32     diffthresh,
+                 l_int32     factor,
+                 l_float32  *ppixfract,
+                 l_float32  *pcolorfract)
+{
+l_int32    i, j, w, h, wpl, rval, gval, bval, minval, maxval;
+l_int32    total, npix, ncolor;
+l_uint32   pixel;
+l_uint32  *data, *line;
+
+    if (ppixfract) *ppixfract = 0.0;
+    if (pcolorfract) *pcolorfract = 0.0;
+    if (!ppixfract && !pcolorfract)
+        return ERROR_INT("neither &pixfract nor &colorfract are defined",
+                         __func__, 1);
+    if (!pixs || pixGetDepth(pixs) != 32)
+        return ERROR_INT("pixs not defined or not 32 bpp", __func__, 1);
+
+    pixGetDimensions(pixs, &w, &h, NULL);
+    data = pixGetData(pixs);
+    wpl = pixGetWpl(pixs);
+    npix = ncolor = total = 0;
+    for (i = 0; i < h; i += factor) {
+        line = data + i * wpl;
+        for (j = 0; j < w; j += factor) {
+            total++;
+            pixel = line[j];
+            extractRGBValues(pixel, &rval, &gval, &bval);
+            minval = L_MIN(rval, gval);
+            minval = L_MIN(minval, bval);
+            if (minval > lightthresh)  /* near white */
+                continue;
+            maxval = L_MAX(rval, gval);
+            maxval = L_MAX(maxval, bval);
+            if (maxval < darkthresh)  /* near black */
+                continue;
+
+            npix++;
+            if (maxval - minval >= diffthresh)
+                ncolor++;
+        }
+    }
+
+    if (npix == 0) {
+        L_WARNING("No pixels found for consideration\n", __func__);
+        return 0;
+    }
+    if (ppixfract) *ppixfract = (l_float32)npix / (l_float32)total;
+    if (pcolorfract) *pcolorfract = (l_float32)ncolor / (l_float32)npix;
+    return 0;
+}
+--]]
+
+-- pixColorFraction(pixs, 20, 244, 20, factor, &pixfract, &colorfract);
+local function GetColorFraction(
+	Pixels: {Pixel},
+	DarkThreshold: number,
+	LightThreshold: number,
+	DiffThreshold: number
+)
+	local ColorCount = 0
+	local PixelCount = 0
+
+	for Index, Pixel, in Pixels do
+		local MinValue = math.min(math.min(Pixel[1], Pixel[2]), Pixel[3])
+
+		-- near white
+		if math.min(math.min(Pixel[1], Pixel[2]), Pixel[3]) > LightThreshold then
+			continue
+		end
+		local MaxValue = math.max(math.max(Pixel[1], Pixel[2]), Pixel[3]) 
+
+		-- near black
+		if math.max(math.max(Pixel[1], Pixel[2]), Pixel[3]) < DarkThreshold then 
+			continue 
+		end
+
+		PixelCount += 1
+		if MaxValue - MinValue >= DiffThreshold then
+			ColorCount += 1
+		end
+	end
+	
+	return PixelCount / #Pixels, ColorCount / #Pixels
+end
+
 local function GetOrCreatePixel(PixelOrColor3: Pixel | Color3): Pixel
 	if typeof(PixelOrColor3) == "table" then
+		if Pixel[1] > 255 or Pixel[1] < 0 then
+			error("[Quantize] Red value in Pixel is not in range 0..255")
+		elseif Pixel[2] > 255 or Pixel[2] < 0 then
+			error("[Quantize] Green value in Pixel is not in range 0..255")
+		elseif Pixel[3] > 255 or Pixel[3] < 0 then
+			error("[Quantize] Blue value in Pixel is not in range 0..255")
+		end
 		return PixelOrColor3
 	else
 		local Pixel = table.create(3)
@@ -183,26 +340,6 @@ end
 local function To32Bit(N: number)
 	return bit32.band(N, ConversionHex)
 end
-
---[[
-	Basic Javascript port of the MMCQ (modified median cut quantization)
-	algorithm from the Leptonica library (http://www.leptonica.com/).
-	Returns a color map you can use to map original pixels to the reduced
-	palette. Still a work in progress.
-
-	@author Nick Rabinowitz
-	@example
- 
-	array of pixels as {R,G,B} arrays
-	local myPixels = {{190,197,190}, {202,204,200}, {207,214,210}, {211,214,211}, {205,207,207}}
-	local maxColors = 4
- 
-	local ColorMap = Quantize(myPixels, maxColors)
-	local Palette = ColorMap.Palette()
-	local NewPixels = Array.map(myPixels, function(p)
-		return ColorMap.Map(p)
-	end)
---]]
 
 -- 3d color space box
 
@@ -342,34 +479,6 @@ function ColorMapPrototype.Map(self: ColorMap, PixelOrColor3: Pixel | Color3)
 		end
 	end
 	return self:Nearest(Pixel)
-end
-
-function ColorMapPrototype.Greyscale(self: ColorMap, CreateCopy: boolean?)
-	local ColorMap = if not CreateCopy then self else setmetatable({
-		VolumeBoxes = self.VolumeBoxes,
-		Palette = self.Palette
-	}, ColorMapPrototype)
-
-	-- XXX: won't  work yet
-	table.sort(ColorMap.Palette, function(A, B)
-		return GetArraySum(A) > GetArraySum(B)
-	end)
-
-	-- force darkest color to black if everything < 5
-	local Lowest = ColorMap.Palette[1]
-	
-	if Lowest[1] < 5 and Lowest[2] < 5 and Lowest[3] < 5 then
-		Lowest = table.create(3, 0)
-	end
-
-	-- force lightest color to white if everything > 251
-	-- deviation: switched #VolumeBoxes - 1 to just #VolumeBoxes
-	local Highest = ColorMap.Palette[#ColorMap.Palette]
-
-	if Highest[1] > 251 and Highest[2] > 251 and Highest[3] > 251 then
-		Highest.__average_pixel = table.create(3, 255)
-	end
-	return if CreateCopy then ColorMap else nil
 end
 			
 function ColorMapPrototype.__len(self: ColorMap)
@@ -588,7 +697,11 @@ local function Iterate(Target: number, Queue: PriorityQueue, Histo: {number}, Co
 	end
 end
 
-local function Quantize(Pixels: {}, MaxColors: number, Outdepth: number?)
+local function GeneralQuantization(Pixels: {}, MaxColors: number, Options: GeneralQuantizeOptions?)
+	local Outdepth = Options.Outdepth
+	local Height = Options.Height
+	local Width = Options.Width
+				
 	-- short-circuit
 	if #Pixels == 0 then
 		error("[Quantize] Pixel array must have atleast 1 index")
@@ -598,7 +711,7 @@ local function Quantize(Pixels: {}, MaxColors: number, Outdepth: number?)
 		if Outdepth ~= 1 or Outdepth ~= 2 or Outdepth ~= 4 or Outdepth ~= 8 then
 			error("[Quantize] Outdepth does not equal 1, 2, 4, or 8")
 		elseif MaxColors > 2 ^ Outdepth then 
-            		error("[Quantize] MaxColors is greater than 2 ^ Outdepth")
+			error("[Quantize] MaxColors is greater than 2 ^ Outdepth")
 		end
 	end
 	local NewPixels: {Pixel} = if typeof(Pixels[1]) == "table" then Pixels else table.clone(Pixels)
@@ -606,20 +719,37 @@ local function Quantize(Pixels: {}, MaxColors: number, Outdepth: number?)
 	-- array clone detection, as a clone wont be equal to the original
 	if Pixels ~= NewPixels then
 		for Index, Value in NewPixels do
-			local NewPixel = GetOrCreatePixel(Value)
-			
-			if NewPixel[1] > 255 or NewPixel[1] < 0 then
-				error(string.format(InvalidPixelAtIndexFormat, "Red", Index), 2)
-			elseif NewPixel[2] > 255 or NewPixel[2] < 0 then
-				error(string.format(InvalidPixelAtIndexFormat, "Green", Index), 2)
-			elseif NewPixel[3] > 255 or NewPixel[3] < 0 then
-				error(string.format(InvalidPixelAtIndexFormat, "Blue", Index), 2)
-			end
-			NewPixels[Index] = NewPixel
+			NewPixels[Index] = GetOrCreatePixel(Value)
 		end
 	end
 
-	-- XXX: check color content and convert to grayscale if insufficient
+	-- TODO: check color content and convert to grayscale if insufficient
+	-- Determine if the image has sufficient color content.
+	-- If pixfract << 1, most pixels are close to black or white.
+	-- If colorfract << 1, the pixels that are not near
+	-- black or white have very little color.
+	-- If with little color, quantize with a grayscale colormap.
+
+	if Options.CheckGreyscale then	
+		local PixelFraction, ColorFraction = GetColorFraction(Pixels, 20, 244, 20)
+						
+		if PixelFraction * ColorFraction < 0.00025 then
+			print(string.format(
+				"Pixel fraction neither white nor black = %6.3f\nColor fraction of those pixels = %6.3f\nQuantizing in gray",
+				PixelFraction,
+				ColorFraction
+			)
+			local Colors = table.create(255)
+
+			for Index = 1, 255 do
+				Colors[Index] = {
+					Pixel = table.create(3, (255 * Index) / (255 - 1))
+				}
+			end
+			return (setmetatable({Colors = Colors}, ColorMapPrototype) :: any
+		end
+	end
+					
 	-- histo (1-d array, giving the number of pixels in
 	-- each quantized region of color space), or nil on error
 	local Histo = table.create(HistoSize)
@@ -633,10 +763,9 @@ local function Quantize(Pixels: {}, MaxColors: number, Outdepth: number?)
 		Histo[Index] = (Histo[Index] or 0) + 1
 	end
 
-	-- XXX: generate the new colors from the histo and return
-	-- Ported mostly from:
-	-- https://github.com/DanBloomberg/leptonica/blob/e09c1f283aa5a896facc297b617775373519d450/src/colorquant2.c#L391
 	if #Histo > MaxColors then
+		-- Ported mostly from:
+		-- https://github.com/DanBloomberg/leptonica/blob/e09c1f283aa5a896facc297b617775373519d450/src/colorquant2.c#L391
 		local ColorAmount = Outdepth or 0
 
 		if not Outdepth then
@@ -647,7 +776,7 @@ local function Quantize(Pixels: {}, MaxColors: number, Outdepth: number?)
 			end
 		end
 
-		local PaletteSize = if ColorAmount <= 2 then
+		local ColorsSize = if ColorAmount <= 2 then
 				PaletteSize2
 			elseif ColorAmount <= 4 then
 				PaletteSize4
@@ -655,7 +784,7 @@ local function Quantize(Pixels: {}, MaxColors: number, Outdepth: number?)
 				PaletteSize16
 			else
 				PaletteSize0
-		local Palette = table.create(PaletteSize)        
+		local Colors = table.create(ColorsSize)        
 
 		for Index = 1, HistoSize do
 			if Histo[Index] then
@@ -663,13 +792,13 @@ local function Quantize(Pixels: {}, MaxColors: number, Outdepth: number?)
 				Pixel[1] = bit32.lshift(bit32.rshift(Index, (2 * Sigbits)), Shift)
 				Pixel[2] = bit32.lshift(bit32.band(bit32.rshift(Index, Sigbits), Mask), Shift)
 				Pixel[3] = bit32.lshift(bit32.band(Index, Mask), Shift)
-				Palette[#Palette + 1] = Pixel
+				Colors[#Colors + 1] = Pixel
 
-				if #Colors > PaletteSize then break end
+				if #Colors > ColorsSize then break end
 				Histo[Index] = Index + 1
 			end
 		end
-		return (setmetatable({Palette = Palette}, ColorMapPrototype) :: any
+		return (setmetatable({Colors = Colors}, ColorMapPrototype) :: any
 	else	
 		-- get the beginning vbox from the colors
 		local VolumeBox = VolumeBoxFromPixels(NewPixels, Histo)
@@ -695,15 +824,29 @@ local function Quantize(Pixels: {}, MaxColors: number, Outdepth: number?)
 		SortQueue(PriorityQueue, OccupancySizeSort)
 		ReverseTable(VolumeBoxes)
 
-		local Palette = table.create(#VolumeBoxes)
+		--[[
+		-- XXX: won't  work yet
+		table.sort(ColorMap.Palette, function(A, B)
+			return GetArraySum(A) > GetArraySum(B)
+		end)
 
-		for Index, VolumeBox in VolumeBoxes do
-			Palette[Index] = VolumeBox:Average()
+		-- force darkest color to black if everything < 5
+		local Lowest = ColorMap.Palette[1]
+	
+		if Lowest[1] < 5 and Lowest[2] < 5 and Lowest[3] < 5 then
+			Lowest = table.create(3, 0)
 		end
-							
+
+		-- force lightest color to white if everything > 251
+		-- deviation: switched #VolumeBoxes - 1 to just #VolumeBoxes
+		local Highest = ColorMap.Palette[#ColorMap.Palette]
+
+		if Highest[1] > 251 and Highest[2] > 251 and Highest[3] > 251 then
+			Highest.__average_pixel = table.create(3, 255)
+		end
+		--]]
 		return setmetatable({
-			VolumeBoxes = VolumeBoxes,
-			Palette = Palette,
+			Colors = VolumeBoxes
 		}, ColorMapPrototype) :: any
 	end
 end
