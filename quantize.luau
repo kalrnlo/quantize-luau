@@ -453,11 +453,11 @@ function ColorMapPrototype.__len(self: ColorMap)
 end
 
 local function VolumeBoxFromPixels(Pixels: {Pixel}, Histo: {number})
-	local GreenMin = 1000000
+	local GreenMin = math.huge
 	local GreenMax = 0
-	local BlueMin = 1000000
+	local BlueMin = math.huge
 	local BlueMax = 0
-	local RedMin = 1000000
+	local RedMin = math.huge
 	local RedMax = 0
 				
 	for _, Pixel in Pixels do
