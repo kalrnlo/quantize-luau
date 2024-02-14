@@ -6,12 +6,11 @@
 -- With added support for Color3s to be used instead of RGB arrays. 
 -- Based on quantize.js and Leptonica.
 -- @Kalrnlo
--- 09/02/2024
+-- 14/02/2024
 
 -- TODO:
 -- Remove greyscale method, and implement it into the quantize function
 -- like leptronica https://github.com/DanBloomberg/leptonica/blob/e09c1f283aa5a896facc297b617775373519d450/src/colorquant2.c#L533
--- Remove VolumeBox class and use structs instead for VolumeBox data
 -- Add in Mixed & MixedFewColor quantize methods from leptronica (possibly)
 
 type Comparator = (A: VolumeBoxStruct, B: VolumeBoxStruct) -> boolean
