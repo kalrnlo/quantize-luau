@@ -41,16 +41,12 @@ type PriorityQueue = {
 type GeneralQuantizeOptions = {
 	CheckGreyscale: boolean?,
 	Outdepth: number?,
-	Height: number?,
-	Width: number?,
 }
 
 type MixedQuantizeOptions = {
 	LightThreshold: number?,
 	DiffThreshold: number?,
 	DarkThreshold: number?,
-	Height: number?,
-	Width: number?,
 }
 
 type ColorMapPrototype = {
