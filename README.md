@@ -1,11 +1,9 @@
-quantize-luau
-========
+# quantize-luau
 
 A fully typed Luau module for MMCQ color quantization. With added support for Color3s to be used instead of RGB arrays. Based on [quantize.js](https://github.com/olivierlesnicki/quantize) and [Leptonica](https://github.com/DanBloomberg/leptonica/blob/master/src/colorquant2.c).
 
 
-Example
---------------
+## Example Usage
 
 `````lua
 local Quantize = require(Path.To.Quantize)
@@ -17,11 +15,8 @@ local ColorMap = Quantize.General(ArrayOfPixels, MaxColors)
 local Palette = ColorMap:Palette()
 `````
 
-API
---------------
-### Quantization
-
-#### Simple
+## API
+### Simple
 `````lua
 -- Wrapper around Quantize.General() for easier usage. 
 -- This method sets MaxColors to 256, and AllowGreyscale to false.
@@ -29,7 +24,7 @@ local ColorMap = Quantize.Simple(ArrayOfPixels)
 `````
 * `Pixels` - An array of pixels (represented as {R,G,B arrays}) or Color3s to quantize
 
-#### General
+### General
 `````lua
 local Options = {
 	AllowGreyscale = true,
@@ -45,9 +40,9 @@ local ColorMap = Quantize.General(ArrayOfPixels, MaxColors, Options)
 	* *`AllowGreyscale`* - Whether or not Quantize should check if color content is very small. Or force greyscale onto the palette if the first color is very bright and the last is very dark.
 	* *`OutputSize`* - The size of the returned palette, can be either 1, 2, 4 or 8 and cannot exceed 2 ^ OutputSize. 
 
-#### Mixed
+### Mixed
 `````lua
--- Note: GreyAmount + ColorsPerSignificantPixel cannot exceed 255
+-- NOTE: GreyAmount + ColorsPerSignificantPixel cannot exceed 255
 local ColorsPerSignificantPixel = 8
 local GreyAmount = 10
 local Options = {
@@ -68,9 +63,9 @@ local ColorMap = Quantize.Mixed(ArrayOfPixels, ColorsPerSignificantPixel, GreyAm
 	* *`DiffThreshold`* - Threshhold for the max difference between RGB component values, for differences below this the pixel is considered to be gray
  
 
-#### Mixed Few Colors
+### Mixed Few Colors
 `````lua
--- Note: Both ColorsPerSignificantPixel and GreyAmount if set should be at least equal to MaxColors,
+-- NOTE: Both ColorsPerSignificantPixel and GreyAmount if set should be at least equal to MaxColors,
 -- if they aren't a warning is given.
 local Options = {
 	ColorsPerSignificantPixel = 20,
@@ -93,7 +88,6 @@ local ColorMap = Quantize.MixedFewColors(ArrayOfPixels, Options)
 	* *`MaxColors`* - The maximum number of colors allowed in the reduced palette, must be within 2 to 256
 	* *`ColorsPerSignificantPixel`* - The amount of colors to be assigned to pixels with significant color 
 	* *`GreyAmount`* - Amount of gray colors to be used, must be greater than or equal to 2
----
 
 ### Color Map
 
