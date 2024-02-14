@@ -77,6 +77,13 @@ export type MixedOptions = {
 	DarkThreshold: number?,
 }
 
+export type FewColorsOptions = {
+	MaxColors: number?,
+	LightThreshold: number?,
+	DiffThreshold: number?,
+	DarkThreshold: number?,
+}
+
 --[[
     Commented out as luau doesnt type this correctly rn
     export type Pixel = {number} | {
@@ -975,6 +982,14 @@ local function GeneralQuantization(Pixels: {}, MaxColors: number, Options: Gener
 			Histo = Histo,
 		}, ColorMapPrototype) :: any
 	end
+end
+
+local function MixedQuantization(Pixels: {}, MaxColors: number, Options: MixedOptions?)
+
+end
+
+local function FewColorsQuantization(Pixels: {}, ColorsPerSignificantPixel: number, Options: MixedOptions?)
+
 end
 
 local Exports = {}
