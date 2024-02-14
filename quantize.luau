@@ -243,18 +243,13 @@ local function GetColorFraction(
 	local PixelCount = 0
 
 	for Index, Pixel, in Pixels do
-		local MinValue = math.min(math.min(Pixel[1], Pixel[2]), Pixel[3])
-
 		-- near white
-		if math.min(math.min(Pixel[1], Pixel[2]), Pixel[3]) > LightThreshold then
-			continue
-		end
-		local MaxValue = math.max(math.max(Pixel[1], Pixel[2]), Pixel[3]) 
+		local MinValue = math.min(math.min(Pixel[1], Pixel[2]), Pixel[3])
+		if MinValue > LightThreshold then continue end
 
 		-- near black
-		if math.max(math.max(Pixel[1], Pixel[2]), Pixel[3]) < DarkThreshold then 
-			continue 
-		end
+		local MaxValue = math.max(math.max(Pixel[1], Pixel[2]), Pixel[3]) 
+		if MaxValue < DarkThreshold then continue end
 
 		PixelCount += 1
 		if MaxValue - MinValue >= DiffThreshold then
