@@ -699,11 +699,8 @@ local function Iterate(Target: number, Queue: PriorityQueue, Histo: {number}, Co
 end
 
 local function GeneralQuantization(Pixels: {}, MaxColors: number, Options: GeneralQuantizeOptions?)
-	local Outdepth = Options.Outdepth
-	local Height = Options.Height
-	local Width = Options.Width
-				
-	-- short-circuit
+	local Outdepth = Options.Outdepth			
+
 	if #Pixels == 0 then
 		error("[Quantize] Pixel array must have atleast 1 index")
 	elseif MaxColors < 2 or MaxColors > 256 then
