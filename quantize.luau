@@ -78,10 +78,12 @@ export type MixedOptions = {
 }
 
 export type FewColorsOptions = {
-	MaxColors: number?,
+	ColorsPerSignificantPixel: number?,
 	LightThreshold: number?,
 	DiffThreshold: number?,
 	DarkThreshold: number?,
+	GreyAmount: number?,
+	MaxColors: number?,
 }
 
 --[[
@@ -984,16 +986,18 @@ local function GeneralQuantization(Pixels: {}, MaxColors: number, Options: Gener
 	end
 end
 
-local function MixedQuantization(Pixels: {}, MaxColors: number, Options: MixedOptions?)
+local function MixedQuantization(Pixels: {}, GreyAmount: number, ,Options: MixedOptions?)
 
 end
 
-local function FewColorsQuantization(Pixels: {}, ColorsPerSignificantPixel: number, Options: MixedOptions?)
+local function MixedFewColorsQuantization(Pixels: {}, Options: FewColorsOptions?)
 
 end
 
 local Exports = {}
 Exports.General = GeneralQuantization :: ((Pixels: {Pixel}, MaxColors: number, Options: GeneralOptions?) -> ColorMap) & ((Color3s: {Color3}, MaxColors: number, Options: GeneralOptions?) -> ColorMap)													
-Exports.Basic = BasicQuantization :: ((Pixels: {Pixel}, MaxColors: number, Options: GeneralOptions?) -> ColorMap) & ((Color3s: {Color3}, MaxColors: number, Options: GeneralOptions?) -> ColorMap)														
+Exports.Basic = BasicQuantization :: ((Pixels: {Pixel}, MaxColors: number, Options: GeneralOptions?) -> ColorMap) & ((Color3s: {Color3}, MaxColors: number, Options: GeneralOptions?) -> ColorMap)
+Exports.Mixed = MixedQuantization :: ((Pixels: {Pixel}, MaxColors: number, Options: GeneralOptions?) -> ColorMap) & ((Color3s: {Color3}, MaxColors: number, Options: GeneralOptions?) -> ColorMap)						
+Exports.MixedFewColors = MixedFewColorsQuantization :: ((Pixels: {Pixel}, Options: FewColorsOptions?) -> ColorMap) & ((Color3s: {Color3}, Options: FewColorsOptions?) -> ColorMap)						
 
 return Exports
