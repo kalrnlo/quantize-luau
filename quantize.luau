@@ -89,7 +89,6 @@ export type MixedOptions = {
 
 export type Pixel = {number}
 
-local InvalidPixelAtIndexFormat = "[Quantize] %s value in Pixel at index &d, is not in range 0..255"
 local ConversionHex = 0xFFFFFFFF
 local FractByPopulations = 0.75	
 local MaxIterations = 1000
@@ -307,18 +306,6 @@ end
 
 local function GetPixelSum(Pixel: Pixel)
 	return (Pixel[1] + Pixel[2]) + Pixel[3]
-end
-
--- Modified from:
--- https://github.com/Roblox/luau-polyfill/blob/main/modules/collections/src/Array/reduce.lua
-local function GetArraySum(Tbl: {number})
-	if #Tbl == 0 then return 0 end
-	local Sum = 0
-	
-	for _, Value in Tbl do
-		Sum += Value
-	end
-	return Sum
 end
 
 local function To32Bit(N: number)
