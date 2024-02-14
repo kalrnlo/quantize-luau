@@ -79,7 +79,6 @@ local Options = {
 local ColorMap = Quantize.MixedFewColors(ArrayOfPixels, Options)
 `````
 * `Pixels` - An array of pixels (represented as {R,G,B arrays}) or Color3s to quantize
-* `MaxColors` - The maximum number of colors allowed in the reduced palette, must be within 2 to 256
   
 * `Options`
 	* *`DarkThreshold`* -  Threshold towards black; if the lightest RGB component of a pixel is below this, the pixel is not considered to be gray or color
