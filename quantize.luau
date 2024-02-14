@@ -14,13 +14,13 @@
 -- Remove VolumeBox class and use structs instead for VolumeBox data
 -- Add in Mixed & MixedFewColor quantize methods from leptronica (possibly)
 
-type Comparator = (A: VolumeBox, B: VolumeBox) -> boolean
+type Comparator = (A: VolumeBoxStruct, B: VolumeBoxStruct) -> boolean
 
 type BaseColorData = {
 	Pixel: Pixel
 }
 
--- Replacement for volume boxes so stuff like map will still work possibly?
+-- Replacement for volume boxes so stuff like map will still work
 type VolumeColorData = {
 	RedMin: number,
 	RedMax: number,
@@ -33,20 +33,22 @@ type VolumeColorData = {
 
 type ColorData = BaseColorData | VolumeColorData
 
+type VolumeBoxStruct = {
+	RedMin: number,
+	RedMax: number,
+	GreenMin: number,
+	GreenMax: number,
+	BlueMin: number,
+	BlueMax: number,
+	Pixel: Pixel?,
+	Volume: number?,
+	Count: number?
+	Histo: {number},
+}
+
 type PriorityQueue = {
-	VolumeBoxes: {VolumeBox},
+	VolumeBoxes: {VolumeBoxStruct},
 	__sorted: boolean
-}
-
-type GeneralQuantizeOptions = {
-	CheckGreyscale: boolean?,
-	Outdepth: number?,
-}
-
-type MixedQuantizeOptions = {
-	LightThreshold: number?,
-	DiffThreshold: number?,
-	DarkThreshold: number?,
 }
 
 type ColorMapPrototype = {
@@ -60,33 +62,21 @@ type ColorMapPrototype = {
 	__index: ColorMapPrototype,
 }
 
-type VolumeBoxPrototype = {
-	Volume: (self: VolumeBox, Force: boolean?) -> number,
-	Average: (self: VolumeBox, Force: boolean?) -> Pixel,
-	Count: (self: VolumeBox, Force: boolean?) -> number,
-	Copy: (self: VolumeBox) -> VolumeBox,
+export type ColorMap = typeof(setmetatable({} :: {
+	Colors: {BaseColorData | VolumeColorData},
+	Histo: {number}?,
+}, {} :: ColorMapPrototype))
 
-	__len: (self: VolumeBox) -> number,
-	__index: VolumeBoxPrototype,
+export type GeneralOptions = {
+	CheckGreyscale: boolean?,
+	Outdepth: number?,
 }
 
-export type VolumeBox = typeof(setmetatable({} :: {
-	Histo: {number},
-	RedMin: number,
-	RedMax: number,
-	GreenMin: number,
-	GreenMax: number,
-	BlueMin: number,
-	BlueMax: number,
-
-	__average_pixel: Pixel?,
-	__volume: number?,
-	__count: number?,
-}, {} :: VolumeBoxPrototype))
-
-export type ColorMap = typeof(setmetatable({} :: {
-	Colors: {BaseColorData | VolumeColorData}
-}, {} :: ColorMapPrototype))
+export type MixedOptions = {
+	LightThreshold: number?,
+	DiffThreshold: number?,
+	DarkThreshold: number?,
+}
 
 --[[
     Commented out as luau doesnt type this correctly rn
@@ -228,6 +218,13 @@ l_uint32  *data, *line;
 }
 --]]
 
+local function VolumeBoxStructToColorData(VolumeBox: VolumeBoxStruct): VolumeColorData
+	VolumeBox.Volume = nil
+	VolumeBox.Count = nil
+	VolumeBox.Histo = nil
+	return VolumeBox :: any
+end
+
 -- pixColorFraction(pixs, 20, 244, 20, factor, &pixfract, &colorfract);
 local function GetColorFraction(
 	Pixels: {Pixel},
@@ -275,17 +272,6 @@ local function GetOrCreatePixel(PixelOrColor3: Pixel | Color3): Pixel
 	end
 end
 
-local function CheckPixel(Pixel: Pixel)
-	if Pixel[1] > 255 or Pixel[1] < 0 then
-		error("[Quantize] Red value in Pixel is not in range 0..255")
-        elseif Pixel[2] > 255 or Pixel[2] < 0 then
-		error("[Quantize] Green value in Pixel is not in range 0..255")
-        elseif Pixel[3] > 255 or Pixel[3] < 0 then
-		error("[Quantize] Blue value in Pixel is not in range 0..255")
-        end
-        return Pixel
-end
-
 local function SortQueue(Queue: PriorityQueue, Comparator: Comparator)
 	if not Queue.__sorted then
 		table.sort(Queue.VolumeBoxes, Comparator)
@@ -297,12 +283,16 @@ local function GetColorIndex(R: number, G: number, B: number)
 	return bit32.lshift(R, 2 * Sigbits) + bit32.lshift(G, Sigbits) + B
 end
 
-local function OccupancySizeSort(A: VolumeBox, B: VolumeBox)
-	return A:Count() * A:Volume() > B:Count() * B:Volume()
-end
-	
-local function CountSort(A: VolumeBox, B: VolumeBox)
-	return A:Count() > B:Count()
+local function GetPaletteSize(ColorCount: number)
+	if ColorCount <= 2 then
+		return PaletteSize2
+	elseif ColorCount <= 4 then
+		return PaletteSize4
+	elseif ColorCount <= 16 then
+		return PaletteSize16
+	else
+		return PaletteSize0
+	end
 end
 
 local function ReverseTable<T>(Tbl: {T})
@@ -313,6 +303,10 @@ local function ReverseTable<T>(Tbl: {T})
 		Tbl[SwapIndex] = Original
 	end 
 	return Tbl
+end
+
+local function GetPixelSum(Pixel: Pixel)
+	return (Pixel[1] + Pixel[2]) + Pixel[3]
 end
 
 -- Modified from:
@@ -333,48 +327,18 @@ end
 
 -- 3d color space box
 
-local VolumeBoxPrototype = {}
-VolumeBoxPrototype.__index = VolumeBoxPrototype
-
-function VolumeBoxPrototype.Volume(self: VolumeBox, Force: boolean?)
-	if Force or not self.__volume then
-		self.__volume = ((self.RedMax - self.RedMin) + 1)
-			* ((self.GreenMax - self.GreenMin) + 1)
-			* ((self.BlueMax - self.BlueMin) + 1)
-	end
-	return self.__volume
-end
-			
-function VolumeBoxPrototype.Count(self: VolumeBox, Force: boolean?)
-	if Force or not self.__count then
-		local PixelCount = 0
-		
-		for R = self.RedMin, self.RedMax do
-			for G = self.GreenMin, self.GreenMax do
-				for B = self.BlueMin, self.BlueMax do
-					PixelCount += self.Histo[GetColorIndex(R, G, B)] or 0
-				end
-			end
-		end
-					
-		self.__count = PixelCount
-		return PixelCount
-	else
-		return self.__count
-	end
-end
-			
-function VolumeBoxPrototype.Average(self: VolumeBox, Force: boolean?)
-	if Force or not self.__average_pixel then
+local function SetOrGetVolumeBoxAverage(VolumeBox: VolumeBoxStruct | VolumeColorData, Histo: {number}?)
+	if not VolumeBox.Pixel then
+		local Histo = Histo or VolumeBox.Histo :: {number}
 		local GreenSum = 0
 		local BlueSum = 0
 		local RedSum = 0
 		local NTOT = 0
 					
-		for R = self.RedMin, self.RedMax do
-			for G = self.GreenMin, self.GreenMax do
-				for B = self.BlueMin, self.BlueMax do
-					local Hue = self.Histo[GetColorIndex(R, G, B)] or 0
+		for R = VolumeBox.RedMin, VolumeBox.RedMax do
+			for G = VolumeBox.GreenMin, VolumeBox.GreenMax do
+				for B = VolumeBox.BlueMin, VolumeBox.BlueMax do
+					local Hue = Histo[GetColorIndex(R, G, B)] or 0
 					GreenSum += (Hue * (G + 0.5)) * VboxAvgMult
 					BlueSum += (Hue * (B + 0.5)) * VboxAvgMult
 					RedSum += (Hue * (R + 0.5)) * VboxAvgMult
@@ -391,57 +355,67 @@ function VolumeBoxPrototype.Average(self: VolumeBox, Force: boolean?)
 			AveragePixel[3] = To32Bit(BlueSum / NTOT)
 		else
 			-- print("empty box")
-			AveragePixel[1] = To32Bit((VboxAvgMult * (self.RedMin + self.RedMax + 1)) / 2)
-			AveragePixel[2] = To32Bit((VboxAvgMult * (self.GreenMin + self.GreenMax + 1)) / 2)
-			AveragePixel[3] = To32Bit((VboxAvgMult * (self.BlueMin + self.BlueMax + 1)) / 2)
+			AveragePixel[1] = To32Bit((VboxAvgMult * (VolumeBox.RedMin + VolumeBox.RedMax + 1)) / 2)
+			AveragePixel[2] = To32Bit((VboxAvgMult * (VolumeBox.GreenMin + VolumeBox.GreenMax + 1)) / 2)
+			AveragePixel[3] = To32Bit((VboxAvgMult * (VolumeBox.BlueMin + VolumeBox.BlueMax + 1)) / 2)
 		end
 		
-		self.__average_pixel = AveragePixel
+		VolumeBox.Pixel = AveragePixel
 		return AveragePixel
 	else
-		return self.__average_pixel
+		return VolumeBox.Pixel
 	end
 end
 
-function VolumeBoxPrototype.__len(self: VolumeBox)
-	return self:Count()
-end
-
-function VolumeBoxPrototype.Copy(self: VolumeBox)
-	return (setmetatable({
-		GreenMin = self.GreenMin,
-		GreenMax = self.GreenMax,
-		BlueMin = self.BlueMin,
-		BlueMax = self.BlueMax,
-		RedMin = self.RedMin,
-		RedMax = self.RedMax,
-		Histo = self.Histo,
-
-		__average_pixel = self.__average_pixel,
-		__volume = self.__volume,
-		__count = self.__count,
-	}, VolumeBoxPrototype) :: any) :: VolumeBox
-end
+local function SetOrGetVolumeBoxCount(VolumeBox: VolumeBoxStruct, Histo: {number}?)
+	if VolumeBox.Count then
+		local Histo = Histo or VolumeBox.Histo :: {number}
+		local PixelCount = 0
 		
+		for R = VolumeBox.RedMin, VolumeBox.RedMax do
+			for G = VolumeBox.GreenMin, VolumeBox.GreenMax do
+				for B = VolumeBox.BlueMin, VolumeBox.BlueMax do
+					PixelCount += Histo[GetColorIndex(R, G, B)] or 0
+				end
+			end
+		end
+					
+		VolumeBox.Count = PixelCount
+		return PixelCount
+	else
+		return VolumeBox.Count
+	end
+end
+
+local function SetOrGetVolumeBoxVolume(VolumeBox: VolumeBoxStruct)
+	if not VolumeBox.Volume then
+		VolumeBox.Volume = ((VolumeBox.RedMax - VolumeBox.RedMin) + 1)
+			* ((VolumeBox.GreenMax - VolumeBox.GreenMin) + 1)
+			* ((VolumeBox.BlueMax - VolumeBox.BlueMin) + 1)
+	end
+	return VolumeBox.Volume
+end
+
 -- Color map
 local ColorMapPrototype = {}
 ColorMapPrototype.__index = ColorMapPrototype
 
 function ColorMapPrototype.Nearest(self: ColorMap, PixelOrColor3: Pixel | Color3)
 	local Pixel = GetOrCreatePixel(PixelOrColor3)
-	local D1 = math.huge
+	local ShortestDistance = math.huge
 	local Nearest
 			
 	for _, Color in self.Colors do
-		local D2 = math.sqrt(
-			math.pow(Pixel[1] - Color.Pixel[1], 2) +
-			math.pow(Pixel[2] - Color.Pixel[2], 2) +
-			math.pow(Pixel[3] - Color.Pixel[3], 2)
+		local ColorPixel = if Color.RedMax then SetOrGetVolumeBoxAverage(Color, self.Histo) else Color.Pixel
+		local Distance = math.sqrt(
+			math.pow(Pixel[1] - ColorPixel[1], 2) +
+			math.pow(Pixel[2] - ColorPixel[2], 2) +
+			math.pow(Pixel[3] - ColorPixel[3], 2)
 		)
 		
-		if D2 < D1 then
-			Nearest = Color
-			D1 = D2
+		if Distance < ShortestDistance then
+			ShortestDistance = Distance
+			Nearest = ColorPixel
 		end
 	end	
 	return Nearest
@@ -454,6 +428,11 @@ function ColorMapPrototype.Map(self: ColorMap, PixelOrColor3: Pixel | Color3)
 	local BlueValue = bit32.rshift(Pixel[3], Shift)
 
 	for _, Color in self.Colors do
+		-- Checking if it has volume box data, and if it doesnt we break
+		-- as the ColorMap wasnt made using volume boxes
+		if Color.RedMax then break end
+		local ColorPixel = if Color.RedMax then SetOrGetVolumeBoxAverage(Color, self.Histo) else Color.Pixel
+			
 		if RedValue >= Color.RedMin and RedValue <= Color.RedMax and
 			GreenValue >= Color.GreenMin and GreenValue <= Color.GreenMax and
 			BlueValue >= Color.BlueMin and BlueValue <= Color.BlueMax
@@ -468,7 +447,8 @@ function ColorMapPrototype.Palette(self: ColorMap)
 	local Pixels = table.create(#self.Colors)
 		
 	for Index, Color in self.Colors do
-		Pixels[Index] = table.clone(Color.Pixel)
+		local ColorPixel = if Color.RedMax then SetOrGetVolumeBoxAverage(Color, self.Histo) else Color.Pixel
+		Pixels[Index] = table.clone(ColorPixel)
 	end
 	return Pixels
 end
@@ -509,7 +489,7 @@ local function VolumeBoxFromPixels(Pixels: {Pixel}, Histo: {number})
 		end
 	end
 	
-	return (setmetatable({
+	return {
 		RedMin = RedMin,
 		RedMax = RedMax,
 		GreenMin = GreenMin,
@@ -517,69 +497,30 @@ local function VolumeBoxFromPixels(Pixels: {Pixel}, Histo: {number})
 		BlueMin = BlueMin,
 		BlueMax = BlueMax,
 		Histo = Histo,
-	}, VolumeBoxPrototype) :: any) :: VolumeBox
+	} :: VolumeBoxStruct
 end
 
-local function DoCut(
-	MaxString: string,
-	MinString: string,
-	MaxNumber: number,
-	MinNumber: number,
-	VolumeBox: VolumeBox,
-	PartialSum: {number},
-	LookAheadSum: {number},
-	Total: number
-): {VolumeBox}?
-	for Index = MinNumber, MaxNumber do
-		if PartialSum[Index] > Total / 2 then
-			local VolumeBox1 = VolumeBox:Copy()
-			local VolumeBox2 = VolumeBox:Copy()
-			local Left = Index - MinNumber
-			local Right = MaxNumber - 1
-			
-			local D2 = if Left <= Right then
-				math.min(MaxNumber - 1, To32Bit((Index + Right) / 2))
-			else
-				math.max(MinNumber, To32Bit((Index - 1) - (Left / 2)))
+local function MedianCutApply(VolumeBox: VolumeBoxStruct, Histo: {number}): (VolumeBoxStruct, VolumeBoxStruct)
+	local Count = SetOrGetVolumeBoxCount(VolumeBox, Histo)
 
-			-- avoid 0-count boxes
-			while PartialSum[D2] == 0 or not PartialSum[D2] do
-				D2 += 1
-			end
-
-			local Count2 = LookAheadSum[D2]
-
-			while not Count2 and PartialSum[D2 - 1] do
-				D2 -= 1
-				Count2 = LookAheadSum[D2]
-			end
-            
-			-- set dimensions
-			VolumeBox1[MaxString] = D2
-			VolumeBox2[MinString] = D2 + 1
-			
-			local VolumeBoxes = table.create(2)
-			VolumeBoxes[1] = VolumeBox1
-			VolumeBoxes[2] = VolumeBox2
-			return VolumeBoxes
-		end
-	end
-
-    return nil
-end
-
-local function MedianCutApply(Histo: {number}, VolumeBox: VolumeBox): {VolumeBox}?
-	if #VolumeBox == 1 then
+	if Count == 1 then
 		-- only one pixel, no split
-		return table.create(1, VolumeBox:Copy())
-	elseif #VolumeBox == 0 then
+		return table.create(1, table.clone(VolumeBoxStruct))
+	elseif Count == 0 then
 		return nil
 	end
-	
+
+	-- If the vbox occupies just one element in color space, it can't
+	-- be split.  Leave the 'sortparam' field at 0, so that it goes to
+	-- the tail of the priority queue and stays there, thereby avoiding
+	-- an infinite loop (take off, put back on the head) if it
+	-- happens to be the most populous box!
 	local GW = (VolumeBox.GreenMax - VolumeBox.GreenMin) + 1
 	local BW = (VolumeBox.BlueMax - VolumeBox.BlueMin) + 1
 	local RW = (VolumeBox.RedMax - VolumeBox.RedMin) + 1
-	local MaxW = math.max(RW, GW, BW)
+
+	-- Select the longest axis for splitting
+	local MaxW = math.max(math.max(RW, GW), BW)
 
 	-- Find the partial sum arrays along the selected axis.
 	local PartialSum = {}
@@ -625,20 +566,74 @@ local function MedianCutApply(Histo: {number}, VolumeBox: VolumeBox): {VolumeBox
 			PartialSum[B] = Total
 		end
 	end
-	local LookAheadSum = table.create(#PartialSum)
+
+	-- Determine the cut planes, making sure that two vboxes
+	-- are always produced.  Generate the two vboxes and compute
+	-- the sum in each of them.  Choose the cut plane within
+	-- the greater of the (left, right) sides of the bin in which
+	-- the median pixel resides.  Here's the surprise: go halfway
+	-- into that side.  By doing that, you technically move away
+	-- from "median cut," but in the process a significant number
+	-- of low-count vboxes are produced, allowing much better
+	-- reproduction of low-count spot colors.
+	if MaxW == RW then
+		for Index = VolumeBox.RedMin, VolumeBox.RedMax do
+			if PartialSum[Index] > Total / 2 then
+				local VolumeBox1 = table.clone(VolumeBox)
+				local VolumeBox2 = table.clone(VolumeBox)
+				local Left = Index - VolumeBox.RedMin
+				local Right = VolumeBox.RedMax - Index
 			
-	for Index, Value in PartialSum do
-		LookAheadSum[Index] = Total - Value
+				local CopyRedMax2 = if Left <= Right then
+					math.min(VolumeBox.RedMax - 1, To32Bit((Index + Right) / 2))
+				else
+					math.max(VolumeBox.RedMin, To32Bit((Index - 1) - (Left / 2)))
+
+				VolumeBox2.RedMax = CopyRedMax2
+				VolumeBox1.RedMin = CopyRedMax2 + 1
+				return VolumeBox1, VolumeBox2
+			end
+		end
+	elseif MaxW == GW then
+		for Index = VolumeBox.GreenMin, VolumeBox.GreenMax do
+			if PartialSum[Index] > Total / 2 then
+				local VolumeBox1 = table.clone(VolumeBox)
+				local VolumeBox2 = table.clone(VolumeBox)
+				local Left = Index - VolumeBox.GreenMin
+				local Right = VolumeBox.GreenMax - Index
+			
+				local CopyGreenMax2 = if Left <= Right then
+					math.min(VolumeBox.GreenMax - 1, To32Bit((Index + Right) / 2))
+				else
+					math.max(VolumeBox.GreenMin, To32Bit((Index - 1) - (Left / 2)))
+
+				VolumeBox2.GreenMax = CopyGreenMax2
+				VolumeBox1.GreenMin = CopyGreenMax2 + 1
+				return VolumeBox1, VolumeBox2
+			end
+		end
+	else
+		for Index = VolumeBox.BlueMin, VolumeBox.BlueMax do
+			if PartialSum[Index] > Total / 2 then
+				local VolumeBox1 = table.clone(VolumeBox)
+				local VolumeBox2 = table.clone(VolumeBox)
+				local Left = Index - VolumeBox.BlueMin
+				local Right = VolumeBox.BlueMax - Index
+			
+				local CopyBlueMax2 = if Left <= Right then
+					math.min(VolumeBox.BlueMax - 1, To32Bit((Index + Right) / 2))
+				else
+					math.max(VolumeBox.BlueMin, To32Bit((Index - 1) - (Left / 2)))
+
+				VolumeBox2.BlueMax = CopyBlueMax2
+				VolumeBox1.BlueMin = CopyBlueMax2 + 1
+				return VolumeBox1, VolumeBox2
+			end
+		end
 	end
 
-	-- Determine the cut planes
-	if MaxW == GW then
-		return DoCut("GreenMax", "GreenMin", VolumeBox.GreenMax, VolumeBox.GreenMin, VolumeBox, PartialSum, LookAheadSum, Total)
-	elseif MaxW == BW then
-		return DoCut("BlueMax", "BlueMin", VolumeBox.BlueMax, VolumeBox.BlueMin, VolumeBox, PartialSum, LookAheadSum, Total)
-	else
-		return DoCut("RedMax", "RedMin", VolumeBox.RedMax, VolumeBox.RedMin, VolumeBox, PartialSum, LookAheadSum, Total)
-   	 end
+	warn("[Quantize] VolumeBoxes not made; shouldn't happen")
+	return nil
 end
 
 -- inner function to do the iteration
@@ -650,18 +645,12 @@ local function Iterate(Target: number, Queue: PriorityQueue, Histo: {number}, Co
 		-- Doing the checks at the top like this PR:
 		-- https://github.com/olivierlesnicki/quantize/pull/6
 		if PixelCount >= Target or Niters > MaxIterations then return end
-		--[[
-			if Niters > MaxIterations then
-				warn("[Quantize] infinite loop; perhaps too few pixels!")
-				return
-			end
-		--]]
-
+						
 		SortQueue(Queue, Comparator)
-		local VolumeBox = table.remove(Queue.VolumeBoxes) :: VolumeBox
+		local VolumeBox = table.remove(Queue.VolumeBoxes) :: VolumeBoxStruct
 
 		-- just put it back
-		if #VolumeBox == 0 then
+		if SetOrGetVolumeBoxCount(VolumeBox, Histo) == 0 then
 			table.insert(Queue.VolumeBoxes, VolumeBox)
 			Niters += 1
 			continue
@@ -669,19 +658,12 @@ local function Iterate(Target: number, Queue: PriorityQueue, Histo: {number}, Co
 		Queue.__sorted = false
 
 		-- do the cut
-		local VolumeBoxes = MedianCutApply(Histo, VolumeBox)
+		local VolumeBox1, VolumeBox2 = MedianCutApply(VolumeBox, Histo)
 
-		if not VolumeBoxes then
-			warn("[Quantize] MedianCutApply failed!")
-			return
-		elseif not VolumeBoxes[1] then
-			warn("[Quantize] VolumeBox1 not defined; shouldn't happen!")
-			return
-		end
-		table.insert(Queue.VolumeBoxes, VolumeBoxes[1])
+		table.insert(Queue.VolumeBoxes, VolumeBox1)
 
-		if VolumeBoxes[2] then
-			table.insert(Queue.VolumeBoxes, VolumeBoxes[2])
+		if VolumeBox2 then
+			table.insert(Queue.VolumeBoxes, VolumeBox2)
 			PixelCount += 1
 		end
 
@@ -689,7 +671,166 @@ local function Iterate(Target: number, Queue: PriorityQueue, Histo: {number}, Co
 	end
 end
 
-local function GeneralQuantization(Pixels: {}, MaxColors: number, Options: GeneralQuantizeOptions?)
+local function OccupancySizeSort(A: VolumeBoxStruct, B: VolumeBoxStruct)
+	return SetOrGetVolumeBoxCount(A) * SetOrGetVolumeBoxVolume(A) > 
+		SetOrGetVolumeBoxCount(B) * SetOrGetVolumeBoxVolume(B)
+end
+	
+local function CountSort(A: VolumeBoxStruct, B: VolumeBoxStruct)
+	return SetOrGetVolumeBoxCount(A) > SetOrGetVolumeBoxCount(B)
+end
+
+local function SumSort(A: ColorData, B: ColorData)
+	return GetPixelSum(A.Pixel) > GetPixelSum(B.Pixel)
+end
+
+local function BasicQuantization(Pixels: {}, MaxColors: number, Options: GeneralQuantizeOptions?)
+	local Outdepth = Options.Outdepth			
+
+	if #Pixels == 0 then
+		error("[Quantize] Pixel array must have atleast 1 index")
+	elseif MaxColors < 2 or MaxColors > 256 then
+		error("[Quantize] MaxColors has to be in range 2..256")
+	elseif Outdepth then
+		if Outdepth ~= 1 or Outdepth ~= 2 or Outdepth ~= 4 or Outdepth ~= 8 then
+			error("[Quantize] Outdepth does not equal 1, 2, 4, or 8")
+		elseif MaxColors > 2 ^ Outdepth then 
+			error("[Quantize] MaxColors is greater than 2 ^ Outdepth")
+		end
+	end
+	local NewPixels: {Pixel} = if typeof(Pixels[1]) == "table" then Pixels else table.clone(Pixels)
+
+	-- array clone detection, as a clone wont be equal to the original
+	if Pixels ~= NewPixels then
+		for Index, Value in NewPixels do
+			NewPixels[Index] = GetOrCreatePixel(Value)
+		end
+	end
+
+	-- TODO: check color content and convert to grayscale if insufficient
+	-- Determine if the image has sufficient color content.
+	-- If pixfract << 1, most pixels are close to black or white.
+	-- If colorfract << 1, the pixels that are not near
+	-- black or white have very little color.
+	-- If with little color, quantize with a grayscale colormap.
+
+	if Options.CheckGreyscale then	
+		local PixelFraction, ColorFraction = GetColorFraction(Pixels, 20, 244, 20)
+						
+		if PixelFraction * ColorFraction < 0.00025 then
+			print(string.format(
+				"Pixel fraction neither white nor black = %6.3f\nColor fraction of those pixels = %6.3f\nQuantizing in gray",
+				PixelFraction,
+				ColorFraction
+			)
+			local Palette = table.create(255)
+
+			for Index = 1, 255 do
+				Palette[Index] = {
+					Pixel = table.create(3, (255 * Index) / (255 - 1))
+				}
+			end
+			return (setmetatable({Colors = Palette}, ColorMapPrototype) :: any
+		end
+	end
+					
+	-- histo (1-d array, giving the number of pixels in
+	-- each quantized region of color space), or nil on error
+	local Histo = table.create(HistoSize)
+	
+	for _, Pixel in NewPixels do
+		local Index = GetColorIndex(
+			bit32.rshift(Pixel[1], Shift),
+			bit32.rshift(Pixel[2], Shift),
+			bit32.rshift(Pixel[3], Shift)
+		)
+		Histo[Index] = (Histo[Index] or 0) + 1
+	end
+
+	if #Histo > MaxColors then
+		-- Ported mostly from:
+		-- https://github.com/DanBloomberg/leptonica/blob/e09c1f283aa5a896facc297b617775373519d450/src/colorquant2.c#L391
+		local ColorCount = Outdepth or 0
+
+		if not Outdepth then
+			for Index = 1, HistoSize do
+				if Histo[Index] then
+					ColorCount += 1
+				end
+			end
+		end
+
+		local PaletteSize = GetPaletteSize(ColorCount)
+		local Palette = table.create(PaletteSize)        
+
+		for Index = 1, HistoSize do
+			if Histo[Index] then
+				local Pixel = table.create(3)
+				Pixel[1] = bit32.lshift(bit32.rshift(Index, (2 * Sigbits)), Shift)
+				Pixel[2] = bit32.lshift(bit32.band(bit32.rshift(Index, Sigbits), Mask), Shift)
+				Pixel[3] = bit32.lshift(bit32.band(Index, Mask), Shift)
+				Palette[#Palette + 1] = {Pixel = Pixel}
+
+				if #Colors > PaletteSize then break end
+				Histo[Index] = Index + 1
+			end
+		end
+		return (setmetatable({Colors = Palette}, ColorMapPrototype) :: any
+	else	
+		-- get the beginning vbox from the colors
+		local VolumeBox = VolumeBoxFromPixels(NewPixels, Histo)
+		local VolumeBoxes = table.create(1, VolumeBox)
+		local PriorityQueue = {
+			VolumeBoxes = VolumeBoxes,
+			__sorted = false,
+		}
+  
+		-- first set of colors, sorted by population
+		Iterate(FractByPopulations * MaxColors, PriorityQueue, Histo, CountSort)
+
+		-- Re-sort by the product of pixel occupancy times the size in color space.
+		-- deviation: rather than creating a whole new queue to basically
+		-- reverse the queue, we just reverse the queue
+		SortQueue(PriorityQueue, CountSort)
+		ReverseTable(VolumeBoxes)
+
+		-- next set - generate the median cuts using the (npix * vol) sorting.
+		Iterate(MaxColors, PriorityQueue, Histo, OccupancySizeSort)
+
+		-- calculate the actual colors
+		SortQueue(PriorityQueue, OccupancySizeSort)
+		ReverseTable(VolumeBoxes)
+
+		for _, VolumeBox in VolumeBoxes do
+			VolumeBoxStructToColorData(VolumeBox)
+		end
+		-- XXX: won't  work yet
+		table.sort(VolumeBoxes, SumSort)
+
+		-- force darkest color to black if everything < 5
+		local Lowest = VolumeBoxes[1]
+		if Lowest[1] < 5 and Lowest[2] < 5 and Lowest[3] < 5 then
+			Highest[1] = 0
+			Highest[2] = 0
+			Highest[3] = 0
+		end
+
+		-- force lightest color to white if everything > 251
+		local Highest = VolumeBoxes[#ColorMap.Palette]
+		if Highest[1] > 251 and Highest[2] > 251 and Highest[3] > 251 then
+			Highest[1] = 255
+			Highest[2] = 255
+			Highest[3] = 255
+		end
+												
+		return setmetatable({
+			Colors = VolumeBoxes,
+			Histo = Histo,
+		}, ColorMapPrototype) :: any
+	end
+end
+	
+local function GeneralQuantization(Pixels: {}, MaxColors: number, Options: GeneralOptions?)
 	local Outdepth = Options.Outdepth			
 
 	if #Pixels == 0 then
@@ -755,25 +896,18 @@ local function GeneralQuantization(Pixels: {}, MaxColors: number, Options: Gener
 	if #Histo > MaxColors then
 		-- Ported mostly from:
 		-- https://github.com/DanBloomberg/leptonica/blob/e09c1f283aa5a896facc297b617775373519d450/src/colorquant2.c#L391
-		local ColorAmount = Outdepth or 0
+		local ColorCount = Outdepth or 0
 
 		if not Outdepth then
 			for Index = 1, HistoSize do
 				if Histo[Index] then
-					ColorAmount += 1
+					ColorCount += 1
 				end
 			end
 		end
 
-		local ColorsSize = if ColorAmount <= 2 then
-				PaletteSize2
-			elseif ColorAmount <= 4 then
-				PaletteSize4
-			elseif ColorAmount <= 16 then
-				PaletteSize16
-			else
-				PaletteSize0
-		local Colors = table.create(ColorsSize)        
+		local PaletteSize = GetPaletteSize(ColorCount)
+		local Palette = table.create(PaletteSize)        
 
 		for Index = 1, HistoSize do
 			if Histo[Index] then
@@ -781,13 +915,13 @@ local function GeneralQuantization(Pixels: {}, MaxColors: number, Options: Gener
 				Pixel[1] = bit32.lshift(bit32.rshift(Index, (2 * Sigbits)), Shift)
 				Pixel[2] = bit32.lshift(bit32.band(bit32.rshift(Index, Sigbits), Mask), Shift)
 				Pixel[3] = bit32.lshift(bit32.band(Index, Mask), Shift)
-				Colors[#Colors + 1] = Pixel
+				Palette[#Palette + 1] = {Pixel = Pixel}
 
-				if #Colors > ColorsSize then break end
+				if #Colors > PaletteSize then break end
 				Histo[Index] = Index + 1
 			end
 		end
-		return (setmetatable({Colors = Colors}, ColorMapPrototype) :: any
+		return (setmetatable({Colors = Palette}, ColorMapPrototype) :: any
 	else	
 		-- get the beginning vbox from the colors
 		local VolumeBox = VolumeBoxFromPixels(NewPixels, Histo)
@@ -814,30 +948,51 @@ local function GeneralQuantization(Pixels: {}, MaxColors: number, Options: Gener
 		ReverseTable(VolumeBoxes)
 
 		--[[
+			/* Generate colormap from median cuts and quantize pixd */
+			cmap = pixcmapGenerateFromMedianCuts(lh, histo, sigbits);
+		--]]
+		local PaletteSize = Outdepth or GetPaletteSize(#VolumeBoxes)
+		--[[
+			!!! ONLY NEED TO PORT NON-DITHER VERSION, 
+			AS WE ARE LEAVING THAT UP TO THE USER DUE TO THE LARGE AMOUNT OF
+			DITHERING METHODS THAT EXIST THAT ALL WORK BETTER IN SOME CASES ECT ECT !!!
+											
+			pixd = pixQuantizeWithColormap(
+				pixs, ditherflag, outdepth, cmap, histo, histosize, sigbits
+			);
+		--]]
+
+		for _, VolumeBox in VolumeBoxes do
+			VolumeBoxStructToColorData(VolumeBox)
+		end
 		-- XXX: won't  work yet
-		table.sort(ColorMap.Palette, function(A, B)
-			return GetArraySum(A) > GetArraySum(B)
-		end)
+		table.sort(VolumeBoxes, SumSort)
 
 		-- force darkest color to black if everything < 5
-		local Lowest = ColorMap.Palette[1]
-	
+		local Lowest = VolumeBoxes[1]
 		if Lowest[1] < 5 and Lowest[2] < 5 and Lowest[3] < 5 then
-			Lowest = table.create(3, 0)
+			Highest[1] = 0
+			Highest[2] = 0
+			Highest[3] = 0
 		end
 
 		-- force lightest color to white if everything > 251
-		-- deviation: switched #VolumeBoxes - 1 to just #VolumeBoxes
-		local Highest = ColorMap.Palette[#ColorMap.Palette]
-
+		local Highest = VolumeBoxes[#ColorMap.Palette]
 		if Highest[1] > 251 and Highest[2] > 251 and Highest[3] > 251 then
-			Highest.__average_pixel = table.create(3, 255)
+			Highest[1] = 255
+			Highest[2] = 255
+			Highest[3] = 255
 		end
-		--]]
+																
 		return setmetatable({
-			Colors = VolumeBoxes
+			Colors = VolumeBoxes,
+			Histo = Histo,
 		}, ColorMapPrototype) :: any
 	end
 end
 
-return Quantize :: ((Pixels: {Pixel}, MaxColors: number, Outdepth: number?) -> ColorMap) & ((Color3s: {Color3}, MaxColors: number, Outdepth: number?) -> ColorMap)
+local Exports = {}
+Exports.General = GeneralQuantization :: ((Pixels: {Pixel}, MaxColors: number, Options: GeneralOptions?) -> ColorMap) & ((Color3s: {Color3}, MaxColors: number, Options: GeneralOptions?) -> ColorMap)													
+Exports.Basic = BasicQuantization :: ((Pixels: {Pixel}, MaxColors: number, Options: GeneralOptions?) -> ColorMap) & ((Color3s: {Color3}, MaxColors: number, Options: GeneralOptions?) -> ColorMap)														
+
+return Exports
