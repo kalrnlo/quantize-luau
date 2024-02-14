@@ -55,9 +55,9 @@ type MixedQuantizeOptions = {
 
 type ColorMapPrototype = {
 	Nearest: ((self: ColorMap, Pixel: Pixel) -> Pixel) 
-		& ((self: ColorMap, Color3: Color3) -> Pixel),
+		& ((self: ColorMap, Color3: Color3) -> Pixel?),
 	Map: ((self: ColorMap, Pixel: Pixel) -> Pixel) 
-		& ((self: ColorMap, Color3: Color3) -> Pixel),
+		& ((self: ColorMap, Color3: Color3) -> Pixel?),
 	Palette: (self: ColorMap) -> {Pixel},
 
 	__len: (self: ColorMap) -> number,
@@ -65,7 +65,6 @@ type ColorMapPrototype = {
 }
 
 type VolumeBoxPrototype = {
-	Contains: (self: VolumeBox, Pixel: Pixel) -> boolean,
 	Volume: (self: VolumeBox, Force: boolean?) -> number,
 	Average: (self: VolumeBox, Force: boolean?) -> Pixel,
 	Count: (self: VolumeBox, Force: boolean?) -> number,
@@ -345,17 +344,6 @@ end
 
 local VolumeBoxPrototype = {}
 VolumeBoxPrototype.__index = VolumeBoxPrototype
-	
-function VolumeBoxPrototype.Contains(self: VolumeBox, PixelOrColor3: Pixel | Color3)
-	local Pixel = CheckPixel(GetOrCreatePixel(PixelOrColor3))
-	local RedValue = bit32.rshift(Pixel[1], Shift)
-	local GreenValue = bit32.rshift(Pixel[2], Shift)
-	local BlueValue = bit32.rshift(Pixel[3], Shift)
-           
-	return RedValue >= self.RedMin and RedValue <= self.RedMax and
-		GreenValue >= self.GreenMin and GreenValue <= self.GreenMax and
-		BlueValue >= self.BlueMin and BlueValue <= self.BlueMax
-end
 
 function VolumeBoxPrototype.Volume(self: VolumeBox, Force: boolean?)
 	if Force or not self.__volume then
@@ -449,15 +437,15 @@ local ColorMapPrototype = {}
 ColorMapPrototype.__index = ColorMapPrototype
 
 function ColorMapPrototype.Nearest(self: ColorMap, PixelOrColor3: Pixel | Color3)
-	local Pixel = CheckPixel(GetOrCreatePixel(PixelOrColor3))
+	local Pixel = GetOrCreatePixel(PixelOrColor3)
 	local D1 = math.huge
 	local Nearest
 			
-	for _, Color in self.Palette do
+	for _, Color in self.Colors do
 		local D2 = math.sqrt(
-			math.pow(Pixel[1] - Color[1], 2) +
-			math.pow(Pixel[2] - Color[2], 2) +
-			math.pow(Pixel[3] - Color[3], 2)
+			math.pow(Pixel[1] - Color.Pixel[1], 2) +
+			math.pow(Pixel[2] - Color.Pixel[2], 2) +
+			math.pow(Pixel[3] - Color.Pixel[3], 2)
 		)
 		
 		if D2 < D1 then
@@ -469,20 +457,33 @@ function ColorMapPrototype.Nearest(self: ColorMap, PixelOrColor3: Pixel | Color3
 end
 
 function ColorMapPrototype.Map(self: ColorMap, PixelOrColor3: Pixel | Color3)
-	local Pixel = CheckPixel(GetOrCreatePixel(PixelOrColor3))
+	local Pixel = GetOrCreatePixel(PixelOrColor3)
+	local RedValue = bit32.rshift(Pixel[1], Shift)
+	local GreenValue = bit32.rshift(Pixel[2], Shift)
+	local BlueValue = bit32.rshift(Pixel[3], Shift)
 
-	if self.VolumeBoxes then
-		for _, VolumeBox in self.VolumeBoxes do
-			if VolumeBox:Contains(Pixel) then
-				return VolumeBox:Average()
-			end
+	for _, Color in self.Colors do
+		if RedValue >= Color.RedMin and RedValue <= Color.RedMax and
+			GreenValue >= Color.GreenMin and GreenValue <= Color.GreenMax and
+			BlueValue >= Color.BlueMin and BlueValue <= Color.BlueMax
+		then
+			return Color.Pixel
 		end
 	end
 	return self:Nearest(Pixel)
 end
+
+function ColorMapPrototype.Palette(self: ColorMap)
+	local Pixels = table.create(#self.Colors)
+		
+	for Index, Color in self.Colors do
+		Pixels[Index] = table.clone(Color.Pixel)
+	end
+	return Pixels
+end
 			
 function ColorMapPrototype.__len(self: ColorMap)
-	return #self.VolumeBoxes
+	return #self.Colors
 end
 
 local function VolumeBoxFromPixels(Pixels: {Pixel}, Histo: {number})
