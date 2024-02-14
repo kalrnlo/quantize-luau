@@ -67,8 +67,8 @@ export type ColorMap = typeof(setmetatable({} :: {
 }, {} :: ColorMapPrototype))
 
 export type GeneralOptions = {
-	CheckGreyscale: boolean?,
-	Outdepth: number?,
+	AllowGreyscale: boolean?,
+	OutputSize: number?,
 }
 
 export type MixedOptions = {
@@ -109,6 +109,9 @@ local PaletteSize2 = bit32.lshift(1, 1)
 local PaletteSize4 = bit32.lshift(1, 2)
 local PaletteSize0 = bit32.lshift(1, 8)
 local Mask = bit32.rshift(0xff, Shift)
+local SimpleOptions = {
+	AllowGreyscale = true
+}
 
 --[[
 /* ----------------------------------------------------------------------- *
@@ -679,19 +682,9 @@ local function SumSort(A: ColorData, B: ColorData)
 	return GetPixelSum(A.Pixel) > GetPixelSum(B.Pixel)
 end
 
-local function BasicQuantization(Pixels: {}, MaxColors: number, Options: GeneralQuantizeOptions?)
-	local Outdepth = Options.Outdepth			
-
+local function SimpleQuantization(Pixels: {})			
 	if #Pixels == 0 then
 		error("[Quantize] Pixel array must have atleast 1 index")
-	elseif MaxColors < 2 or MaxColors > 256 then
-		error("[Quantize] MaxColors has to be in range 2..256")
-	elseif Outdepth then
-		if Outdepth ~= 1 or Outdepth ~= 2 or Outdepth ~= 4 or Outdepth ~= 8 then
-			error("[Quantize] Outdepth does not equal 1, 2, 4, or 8")
-		elseif MaxColors > 2 ^ Outdepth then 
-			error("[Quantize] MaxColors is greater than 2 ^ Outdepth")
-		end
 	end
 	local NewPixels: {Pixel} = if typeof(Pixels[1]) == "table" then Pixels else table.clone(Pixels)
 
@@ -709,24 +702,22 @@ local function BasicQuantization(Pixels: {}, MaxColors: number, Options: General
 	-- black or white have very little color.
 	-- If with little color, quantize with a grayscale colormap.
 
-	if Options.CheckGreyscale then	
-		local PixelFraction, ColorFraction = GetColorFraction(Pixels, 20, 244, 20)
+	local PixelFraction, ColorFraction = GetColorFraction(Pixels, 20, 244, 20)
 						
-		if PixelFraction * ColorFraction < 0.00025 then
-			print(string.format(
-				"Pixel fraction neither white nor black = %6.3f\nColor fraction of those pixels = %6.3f\nQuantizing in gray",
-				PixelFraction,
-				ColorFraction
-			)
-			local Palette = table.create(255)
+	if PixelFraction * ColorFraction < 0.00025 then
+		print(string.format(
+			"Pixel fraction neither white nor black = %6.3f\nColor fraction of those pixels = %6.3f\nQuantizing in gray",
+			PixelFraction,
+			ColorFraction
+		)
+		local Palette = table.create(255)
 
-			for Index = 1, 255 do
-				Palette[Index] = {
-					Pixel = table.create(3, (255 * Index) / (255 - 1))
-				}
-			end
-			return (setmetatable({Colors = Palette}, ColorMapPrototype) :: any
+		for Index = 1, 255 do
+			Palette[Index] = {
+				Pixel = table.create(3, (255 * Index) / (255 - 1))
+			}
 		end
+		return (setmetatable({Colors = Palette}, ColorMapPrototype) :: any
 	end
 					
 	-- histo (1-d array, giving the number of pixels in
@@ -745,7 +736,7 @@ local function BasicQuantization(Pixels: {}, MaxColors: number, Options: General
 	if #Histo > MaxColors then
 		-- Ported mostly from:
 		-- https://github.com/DanBloomberg/leptonica/blob/e09c1f283aa5a896facc297b617775373519d450/src/colorquant2.c#L391
-		local ColorCount = Outdepth or 0
+		local ColorCount = 0
 
 		if not Outdepth then
 			for Index = 1, HistoSize do
@@ -781,7 +772,7 @@ local function BasicQuantization(Pixels: {}, MaxColors: number, Options: General
 		}
   
 		-- first set of colors, sorted by population
-		Iterate(FractByPopulations * MaxColors, PriorityQueue, Histo, CountSort)
+		Iterate(FractByPopulations * 256, PriorityQueue, Histo, CountSort)
 
 		-- Re-sort by the product of pixel occupancy times the size in color space.
 		-- deviation: rather than creating a whole new queue to basically
@@ -790,7 +781,7 @@ local function BasicQuantization(Pixels: {}, MaxColors: number, Options: General
 		ReverseTable(VolumeBoxes)
 
 		-- next set - generate the median cuts using the (npix * vol) sorting.
-		Iterate(MaxColors, PriorityQueue, Histo, OccupancySizeSort)
+		Iterate(256, PriorityQueue, Histo, OccupancySizeSort)
 
 		-- calculate the actual colors
 		SortQueue(PriorityQueue, OccupancySizeSort)
@@ -798,24 +789,6 @@ local function BasicQuantization(Pixels: {}, MaxColors: number, Options: General
 
 		for _, VolumeBox in VolumeBoxes do
 			VolumeBoxStructToColorData(VolumeBox)
-		end
-		-- XXX: won't  work yet
-		table.sort(VolumeBoxes, SumSort)
-
-		-- force darkest color to black if everything < 5
-		local Lowest = VolumeBoxes[1]
-		if Lowest[1] < 5 and Lowest[2] < 5 and Lowest[3] < 5 then
-			Highest[1] = 0
-			Highest[2] = 0
-			Highest[3] = 0
-		end
-
-		-- force lightest color to white if everything > 251
-		local Highest = VolumeBoxes[#ColorMap.Palette]
-		if Highest[1] > 251 and Highest[2] > 251 and Highest[3] > 251 then
-			Highest[1] = 255
-			Highest[2] = 255
-			Highest[3] = 255
 		end
 												
 		return setmetatable({
@@ -826,17 +799,17 @@ local function BasicQuantization(Pixels: {}, MaxColors: number, Options: General
 end
 	
 local function GeneralQuantization(Pixels: {}, MaxColors: number, Options: GeneralOptions?)
-	local Outdepth = Options.Outdepth			
+	local OutputSize = Options.OutputSize			
 
 	if #Pixels == 0 then
 		error("[Quantize] Pixel array must have atleast 1 index")
 	elseif MaxColors < 2 or MaxColors > 256 then
 		error("[Quantize] MaxColors has to be in range 2..256")
-	elseif Outdepth then
-		if Outdepth ~= 1 or Outdepth ~= 2 or Outdepth ~= 4 or Outdepth ~= 8 then
-			error("[Quantize] Outdepth does not equal 1, 2, 4, or 8")
-		elseif MaxColors > 2 ^ Outdepth then 
-			error("[Quantize] MaxColors is greater than 2 ^ Outdepth")
+	elseif OutputSize then
+		if OutputSize ~= 1 or OutputSize ~= 2 or OutputSize ~= 4 or OutputSize ~= 8 then
+			error("[Quantize] OutputSize does not equal 1, 2, 4, or 8")
+		elseif MaxColors > 2 ^ OutputSize then 
+			error("[Quantize] MaxColors is greater than 2 ^ OutputSize")
 		end
 	end
 	local NewPixels: {Pixel} = if typeof(Pixels[1]) == "table" then Pixels else table.clone(Pixels)
@@ -855,7 +828,7 @@ local function GeneralQuantization(Pixels: {}, MaxColors: number, Options: Gener
 	-- black or white have very little color.
 	-- If with little color, quantize with a grayscale colormap.
 
-	if Options.CheckGreyscale then	
+	if Options.AllowGreyscale then	
 		local PixelFraction, ColorFraction = GetColorFraction(Pixels, 20, 244, 20)
 						
 		if PixelFraction * ColorFraction < 0.00025 then
@@ -891,9 +864,9 @@ local function GeneralQuantization(Pixels: {}, MaxColors: number, Options: Gener
 	if #Histo > MaxColors then
 		-- Ported mostly from:
 		-- https://github.com/DanBloomberg/leptonica/blob/e09c1f283aa5a896facc297b617775373519d450/src/colorquant2.c#L391
-		local ColorCount = Outdepth or 0
+		local ColorCount = OutputSize or 0
 
-		if not Outdepth then
+		if not OutputSize then
 			for Index = 1, HistoSize do
 				if Histo[Index] then
 					ColorCount += 1
@@ -946,7 +919,7 @@ local function GeneralQuantization(Pixels: {}, MaxColors: number, Options: Gener
 			/* Generate colormap from median cuts and quantize pixd */
 			cmap = pixcmapGenerateFromMedianCuts(lh, histo, sigbits);
 		--]]
-		local PaletteSize = Outdepth or GetPaletteSize(#VolumeBoxes)
+		local PaletteSize = OutputSize or GetPaletteSize(#VolumeBoxes)
 		--[[
 			!!! ONLY NEED TO PORT NON-DITHER VERSION, 
 			AS WE ARE LEAVING THAT UP TO THE USER DUE TO THE LARGE AMOUNT OF
@@ -960,23 +933,26 @@ local function GeneralQuantization(Pixels: {}, MaxColors: number, Options: Gener
 		for _, VolumeBox in VolumeBoxes do
 			VolumeBoxStructToColorData(VolumeBox)
 		end
-		-- XXX: won't  work yet
-		table.sort(VolumeBoxes, SumSort)
 
-		-- force darkest color to black if everything < 5
-		local Lowest = VolumeBoxes[1]
-		if Lowest[1] < 5 and Lowest[2] < 5 and Lowest[3] < 5 then
-			Highest[1] = 0
-			Highest[2] = 0
-			Highest[3] = 0
-		end
+		if Options.AllowGreyscale then
+			-- XXX: won't  work yet
+			table.sort(VolumeBoxes, SumSort)
 
-		-- force lightest color to white if everything > 251
-		local Highest = VolumeBoxes[#ColorMap.Palette]
-		if Highest[1] > 251 and Highest[2] > 251 and Highest[3] > 251 then
-			Highest[1] = 255
-			Highest[2] = 255
-			Highest[3] = 255
+			-- force darkest color to black if everything < 5
+			local Lowest = VolumeBoxes[1]
+			if Lowest[1] < 5 and Lowest[2] < 5 and Lowest[3] < 5 then
+				Highest[1] = 0
+				Highest[2] = 0
+				Highest[3] = 0
+			end
+
+			-- force lightest color to white if everything > 251
+			local Highest = VolumeBoxes[#ColorMap.Palette]
+			if Highest[1] > 251 and Highest[2] > 251 and Highest[3] > 251 then
+				Highest[1] = 255
+				Highest[2] = 255
+				Highest[3] = 255
+			end
 		end
 																
 		return setmetatable({
@@ -994,18 +970,21 @@ local function MixedFewColorsQuantization(Pixels: {}, Options: FewColorsOptions?
 
 end
 
+local function SimpleQuantization(Pixels: {})
+	return GeneralQuantization(Pixels, 256, SimpleOptions)
+end
+
 local Exports = {}
 
-Exports.Mixed = MixedQuantization :: ((Pixels: {Pixel}, ColorsPerSignificantPixel: number, GreyAmount: number, Options: GeneralOptions?) -> ColorMap) & 
-	((Color3s: {Color3}, ColorsPerSignificantPixel: number, GreyAmount: number, Options: GeneralOptions?) -> ColorMap)
+Exports.Mixed = MixedQuantization :: ((Pixels: {Pixel}, ColorsPerSignificantPixel: number, GreyAmount: number, Options: MixedOptions?) -> ColorMap) & 
+	((Color3s: {Color3}, ColorsPerSignificantPixel: number, GreyAmount: number, Options: MixedOptions?) -> ColorMap)
 
 Exports.General = GeneralQuantization :: ((Pixels: {Pixel}, MaxColors: number, Options: GeneralOptions?) -> ColorMap) & 
 	((Color3s: {Color3}, MaxColors: number, Options: GeneralOptions?) -> ColorMap)
 
-Exports.Basic = BasicQuantization :: ((Pixels: {Pixel}, MaxColors: number, Options: GeneralOptions?) -> ColorMap) & 
-	((Color3s: {Color3}, MaxColors: number, Options: GeneralOptions?) -> ColorMap)
-
 Exports.MixedFewColors = MixedFewColorsQuantization :: ((Pixels: {Pixel}, Options: FewColorsOptions?) -> ColorMap) & 
-	((Color3s: {Color3}, Options: FewColorsOptions?) -> ColorMap)						
+	((Color3s: {Color3}, Options: FewColorsOptions?) -> ColorMap)	
+
+Exports.Simple = SimpleQuantization :: ((Pixels: {Pixel}) -> ColorMap) & ((Color3s: {Color3}) -> ColorMap)				
 
 return Exports
