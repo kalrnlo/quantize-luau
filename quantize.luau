@@ -141,7 +141,9 @@ local function GetArraySum(Tbl: {number})
 	return Sum
 end
 
-local To32Bit = bit32.band
+local function To32Bit(N: number)
+	return bit32.band(N, 0xFFFFFFFF)
+end
 
 --[[
 	Basic Javascript port of the MMCQ (modified median cut quantization)
